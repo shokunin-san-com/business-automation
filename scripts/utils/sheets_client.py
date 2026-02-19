@@ -149,7 +149,40 @@ def get_worksheet(sheet_name: str) -> gspread.Worksheet:
 def get_all_rows(sheet_name: str) -> list[dict[str, Any]]:
     """Return all rows from a sheet as a list of dicts."""
     ws = get_worksheet(sheet_name)
-    return ws.get_all_records()
+    try:
+        return ws.get_all_records()
+    except Exception as e:
+        if "Expecting value" in str(e):
+            # gspread raises JSONDecodeError when header/data columns mismatch
+            # or when there are duplicate/empty headers. Fall back to manual parse.
+            logger.warning(f"get_all_records() failed for {sheet_name}: {e}. Using fallback.")
+            data = ws.get_all_values()
+            if len(data) < 2:
+                return []
+            headers = data[0]
+            # Deduplicate empty headers by adding index suffix
+            seen: dict[str, int] = {}
+            clean_headers = []
+            for h in headers:
+                h = str(h).strip()
+                if not h:
+                    h = f"_col_{len(clean_headers)}"
+                if h in seen:
+                    seen[h] += 1
+                    h = f"{h}_{seen[h]}"
+                else:
+                    seen[h] = 0
+                clean_headers.append(h)
+            rows = []
+            for row_data in data[1:]:
+                if all(str(c).strip() == "" for c in row_data):
+                    continue
+                row_dict = {}
+                for i, header in enumerate(clean_headers):
+                    row_dict[header] = row_data[i] if i < len(row_data) else ""
+                rows.append(row_dict)
+            return rows
+        raise
 
 
 def get_rows_by_status(sheet_name: str, status: str) -> list[dict[str, Any]]:
