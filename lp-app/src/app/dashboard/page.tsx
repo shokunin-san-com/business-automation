@@ -94,7 +94,46 @@ const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers
   "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "Mon 8:00", schedulers: ["schedule-slack-report"] },
   "6_ads_monitor": { icon: "\u{1F4B0}", schedule: "Hourly 24/365", schedulers: ["schedule-ads-monitor"] },
   "7_learning_engine": { icon: "\u{1F9E0}", schedule: "Daily 2:00", schedulers: ["schedule-learning-engine"] },
+  "8_ads_creator": { icon: "\u{1F4E3}", schedule: "Weekly Mon 7:00", schedulers: ["schedule-ads-creator"] },
 };
+
+const SCHEDULE_PRESETS = [
+  { label: "毎日 6:00", cron: "0 6 * * *" },
+  { label: "毎日 9:00", cron: "0 9 * * *" },
+  { label: "6時間毎", cron: "0 */6 * * *" },
+  { label: "12時間毎", cron: "0 */12 * * *" },
+  { label: "毎週月曜 8:00", cron: "0 8 * * 1" },
+];
+
+function cronToJapanese(cron: string): string {
+  if (!cron) return "";
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return cron;
+  const [minute, hour, day, month, weekday] = parts;
+
+  const weekdayNames: Record<string, string> = {
+    "0": "日", "1": "月", "2": "火", "3": "水", "4": "木", "5": "金", "6": "土", "7": "日",
+  };
+
+  // Every N hours
+  if (hour.startsWith("*/") && minute === "0" && day === "*" && month === "*" && weekday === "*") {
+    return `${hour.slice(2)}時間毎`;
+  }
+  // Daily at specific time
+  if (day === "*" && month === "*" && weekday === "*" && !hour.includes("/") && !minute.includes("/")) {
+    return `毎日 ${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+  }
+  // Weekday specific
+  if (day === "*" && month === "*" && weekday !== "*" && !hour.includes("/")) {
+    const dayName = weekdayNames[weekday] || weekday;
+    return `毎週${dayName}曜 ${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+  }
+  // Weekdays (1-5)
+  if (day === "*" && month === "*" && weekday === "1-5" && !hour.includes("/")) {
+    return `平日 ${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+  }
+  return cron;
+}
 
 function formatTime(iso: string): string {
   if (!iso) return "\u2014";
@@ -125,6 +164,13 @@ export default function DashboardPage() {
   const [executing, setExecuting] = useState<string | null>(null);
   const [togglingScheduler, setTogglingScheduler] = useState<string | null>(null);
   const [globalToggling, setGlobalToggling] = useState(false);
+  const [scheduleEditTarget, setScheduleEditTarget] = useState<{
+    schedulerName: string;
+    scriptLabel: string;
+    currentCron: string;
+  } | null>(null);
+  const [scheduleEditCron, setScheduleEditCron] = useState("");
+  const [scheduleEditSaving, setScheduleEditSaving] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   // Knowledge state
@@ -136,6 +182,14 @@ export default function DashboardPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Ads approval state
+  const [pendingAds, setPendingAds] = useState<{
+    id: string; businessId: string; campaignName: string; campaignId: string;
+    dailyBudget: number; keywords: string[]; headlines: string[]; descriptions: string[];
+    createdAt: string;
+  }[]>([]);
+  const [approvingAd, setApprovingAd] = useState<string | null>(null);
 
   // Feedback state
   const [feedbackMessages, setFeedbackMessages] = useState<ChatMessage[]>([]);
@@ -274,6 +328,64 @@ export default function DashboardPage() {
       console.error("Global toggle error:", err);
     } finally {
       setGlobalToggling(false);
+    }
+  };
+
+  // Fetch pending ad campaigns
+  const fetchPendingAds = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ads");
+      if (res.ok) {
+        const d = await res.json();
+        setPendingAds(d.campaigns || []);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "pipeline") {
+      fetchPendingAds();
+    }
+  }, [activeTab, fetchPendingAds]);
+
+  const handleAdApproval = async (adId: string, action: "approve" | "reject") => {
+    setApprovingAd(adId);
+    try {
+      await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: adId, action }),
+      });
+      await fetchPendingAds();
+    } finally {
+      setApprovingAd(null);
+    }
+  };
+
+  const handleScheduleSave = async () => {
+    if (!scheduleEditTarget || !scheduleEditCron.trim()) return;
+    setScheduleEditSaving(true);
+    try {
+      const res = await fetch("/api/dashboard/scheduler", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: scheduleEditTarget.schedulerName,
+          schedule: scheduleEditCron.trim(),
+        }),
+      });
+      if (res.ok) {
+        setScheduleEditTarget(null);
+        await fetchData();
+      } else {
+        const err = await res.json();
+        alert(err.error || "スケジュール更新に失敗しました");
+      }
+    } catch (err) {
+      console.error("Schedule edit error:", err);
+      alert("スケジュール更新に失敗しました");
+    } finally {
+      setScheduleEditSaving(false);
     }
   };
 
@@ -662,6 +774,73 @@ export default function DashboardPage() {
             </TabButton>
           </div>
 
+          {/* ---- Pending Ad Campaigns Banner ---- */}
+          {activeTab === "pipeline" && pendingAds.length > 0 && (
+            <section className="rounded-2xl border border-green-500/20 bg-gradient-to-r from-green-500/[.06] to-emerald-500/[.04] p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500/20 text-[10px]">{"\u{1F4E3}"}</span>
+                <h2 className="text-sm font-semibold text-green-300">{"広告キャンペーン承認待ち"} {"\u2014"} {pendingAds.length}{"件"}</h2>
+              </div>
+              <div className="space-y-3">
+                {pendingAds.map((ad) => (
+                  <div key={ad.id} className="rounded-xl bg-black/30 p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm">{ad.campaignName}</p>
+                        <p className="mt-1 text-[10px] text-white/30">{"日次予算: "}{ad.dailyBudget}{"円"}</p>
+
+                        {/* Headlines preview */}
+                        {ad.headlines.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-white/40 mb-1">{"見出し:"}</p>
+                            <div className="flex flex-wrap gap-1">
+                              {ad.headlines.slice(0, 5).map((h, i) => (
+                                <span key={i} className="rounded-md bg-green-500/10 px-2 py-0.5 text-[10px] text-green-400 border border-green-500/15">
+                                  {h}
+                                </span>
+                              ))}
+                              {ad.headlines.length > 5 && (
+                                <span className="text-[10px] text-white/20">+{ad.headlines.length - 5}</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Keywords preview */}
+                        {ad.keywords.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-white/40 mb-1">{"キーワード:"}</p>
+                            <p className="text-[10px] text-white/50">
+                              {ad.keywords.slice(0, 6).join(", ")}
+                              {ad.keywords.length > 6 && ` +${ad.keywords.length - 6}`}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          onClick={() => handleAdApproval(ad.id, "approve")}
+                          disabled={approvingAd === ad.id}
+                          className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white transition-all hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          {approvingAd === ad.id ? "..." : "承認"}
+                        </button>
+                        <button
+                          onClick={() => handleAdApproval(ad.id, "reject")}
+                          disabled={approvingAd === ad.id}
+                          className="rounded-lg bg-white/5 px-3.5 py-1.5 text-xs font-medium text-white/60 transition-all hover:bg-white/10 disabled:opacity-50"
+                        >
+                          {"却下"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* ---- Pipeline Status ---- */}
           {activeTab === "pipeline" && (
             <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -692,7 +871,34 @@ export default function DashboardPage() {
                         <span className="text-xl">{meta.icon}</span>
                         <div>
                           <p className="text-sm font-medium">{script.label}</p>
-                          <p className="text-[10px] text-white/30">{meta.schedule}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[10px] text-white/30">
+                              {(() => {
+                                const firstScheduler = scriptSchedulers[0];
+                                const realCron = firstScheduler ? schedulerStatus[firstScheduler]?.schedule : "";
+                                return realCron ? cronToJapanese(realCron) : meta.schedule;
+                              })()}
+                            </p>
+                            {scriptSchedulers.length === 1 && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const name = scriptSchedulers[0];
+                                  const currentCron = schedulerStatus[name]?.schedule || "";
+                                  setScheduleEditTarget({
+                                    schedulerName: name,
+                                    scriptLabel: script.label,
+                                    currentCron,
+                                  });
+                                  setScheduleEditCron(currentCron);
+                                }}
+                                className="text-[9px] text-white/20 hover:text-blue-400 transition-colors"
+                                title="スケジュール編集"
+                              >
+                                {"\u270F\uFE0F"}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${badge.bg} ${badge.text}`}>
@@ -1142,6 +1348,85 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </section>
+            </div>
+          )}
+
+          {/* ---- Schedule Edit Modal ---- */}
+          {scheduleEditTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+              <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#12121a] p-6 shadow-2xl">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-white">
+                    スケジュール編集 — {scheduleEditTarget.scriptLabel}
+                  </h3>
+                  <button
+                    onClick={() => setScheduleEditTarget(null)}
+                    className="text-white/30 hover:text-white/60 text-lg"
+                  >
+                    {"\u2715"}
+                  </button>
+                </div>
+
+                <div className="mb-4">
+                  <p className="mb-1 text-[10px] text-white/30">現在のスケジュール</p>
+                  <p className="text-xs text-white/60">
+                    {scheduleEditTarget.currentCron
+                      ? `${cronToJapanese(scheduleEditTarget.currentCron)} (${scheduleEditTarget.currentCron})`
+                      : "未設定"}
+                  </p>
+                </div>
+
+                <div className="mb-4">
+                  <p className="mb-2 text-[10px] text-white/30">プリセット</p>
+                  <div className="flex flex-wrap gap-2">
+                    {SCHEDULE_PRESETS.map((preset) => (
+                      <button
+                        key={preset.cron}
+                        onClick={() => setScheduleEditCron(preset.cron)}
+                        className={`rounded-lg px-3 py-1.5 text-[11px] border transition-all ${
+                          scheduleEditCron === preset.cron
+                            ? "bg-blue-600/20 text-blue-400 border-blue-500/30"
+                            : "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mb-5">
+                  <p className="mb-1 text-[10px] text-white/30">カスタムcron式 (分 時 日 月 曜日)</p>
+                  <input
+                    type="text"
+                    value={scheduleEditCron}
+                    onChange={(e) => setScheduleEditCron(e.target.value)}
+                    placeholder="0 9 * * *"
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs text-white font-mono outline-none focus:border-blue-500/50 placeholder:text-white/20"
+                  />
+                  {scheduleEditCron && (
+                    <p className="mt-1 text-[10px] text-blue-400/60">
+                      {cronToJapanese(scheduleEditCron)}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setScheduleEditTarget(null)}
+                    className="flex-1 rounded-xl bg-white/5 py-2.5 text-xs font-medium text-white/60 hover:bg-white/10 transition-colors"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={handleScheduleSave}
+                    disabled={scheduleEditSaving || !scheduleEditCron.trim()}
+                    className="flex-1 rounded-xl bg-blue-600 py-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 transition-colors"
+                  >
+                    {scheduleEditSaving ? "保存中..." : "保存"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

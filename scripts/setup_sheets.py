@@ -24,6 +24,8 @@ SHEETS = {
         "market_size",
         "differentiator",
         "created_at",
+        "ceo_fit_score",
+        "ceo_fit_reason",
     ],
     "lp_content": [
         "business_id",
@@ -188,6 +190,19 @@ SHEETS = {
         "created_at",
         "expires_at",
     ],
+    "ads_campaigns": [
+        "id",
+        "business_id",
+        "campaign_name",
+        "campaign_id",
+        "status",
+        "daily_budget",
+        "keywords_json",
+        "ad_texts_json",
+        "created_at",
+        "activated_at",
+        "performance_json",
+    ],
 }
 
 # Default settings to seed
@@ -202,6 +217,14 @@ DEFAULT_SETTINGS = [
     ["selection_top_n", "3", "市場選定で承認候補にする上位市場数"],
     ["competitors_per_market", "5", "各選定市場で分析する競合数"],
     ["exploration_scoring_weights", '{"distortion":3,"barrier":2,"bpo":2,"growth":1.5,"capability":1.5}', "市場選定の5軸重み設定"],
+    ["use_ceo_profile", "false", "trueでCEO経歴スコアリング有効"],
+    ["ceo_profile_json", '{"name":"岡部","strengths":["M&Aフルサイクル（ソーシング→DD→バリュエーション→PMI→売却）","建設・インフラの設備設計〜施工管理の実務経験","海外ビジネス（ベトナム進出、英語交渉、輸入実務）","再生可能エネルギー（系統用蓄電池の市場調査・用地調査）","有料職業紹介事業の許認可保有、特定技能・登録支援機関の知見","複数企業の創業→売却、PMI完遂の実績","上場企業の経営企画・IR経験"],"industries":["建設","エネルギー","M&A","人材紹介","インフラ","製造"],"motivators":["海外案件","大規模エネルギー事業","M&A"],"licenses":["第二種電気工事士","有料職業紹介事業","M&A登録支援機関"]}', "CEO経歴データ"],
+    ["kill_criteria_days", "14", "損切り判定の評価期間（日数）"],
+    ["kill_criteria_min_cv", "1", "期間内の最低CV数。これ未満で撤退候補"],
+    ["kill_criteria_min_score", "15", "期間平均スコア最低ライン"],
+    ["kill_criteria_enabled", "true", "損切り判定の有効/無効"],
+    ["monthly_ad_budget", "100000", "月間広告予算（円）"],
+    ["ads_daily_budget", "3000", "広告自動出稿のデフォルト日次予算（円）"],
 ]
 
 

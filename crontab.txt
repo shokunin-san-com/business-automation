@@ -39,3 +39,9 @@ PYTHON=$PROJECT/.venv/bin/python
 
 # --- 毎週月曜 8:00 — 週次Slackレポート ---
 0 8 * * 1  cd $PROJECT && $PYTHON scripts/5_slack_reporter.py >> data/logs/cron.log 2>&1
+
+# --- 毎日 2:00 — 学習エンジン + 損切り判定 ---
+0 2 * * *  cd $PROJECT && $PYTHON scripts/7_learning_engine.py >> data/logs/cron.log 2>&1
+
+# --- 毎週月曜 7:00 — 広告自動出稿 ---
+0 7 * * 1  cd $PROJECT && $PYTHON scripts/8_ads_creator.py >> data/logs/cron.log 2>&1

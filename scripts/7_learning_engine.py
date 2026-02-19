@@ -56,7 +56,31 @@ def main():
         # 4. Expire old insights
         expired_count = expire_old_insights(max_age_days=30)
 
-        # 5. Notify
+        # 5. Kill criteria evaluation
+        update_status("7_learning_engine", "running", "損切り判定中...")
+        from utils.kill_judge import evaluate_kill_criteria, apply_kill_flag
+
+        kill_results = evaluate_kill_criteria()
+        kill_flagged = 0
+        for kr in kill_results:
+            if kr["recommendation"] == "kill":
+                apply_kill_flag(kr["business_id"])
+                kill_flagged += 1
+
+        # 6. Notify kills
+        if kill_results:
+            kill_msg_parts = [":skull: *損切り判定レポート*\n"]
+            for kr in kill_results:
+                emoji = ":red_circle:" if kr["recommendation"] == "kill" else ":warning:"
+                action = "撤退推奨" if kr["recommendation"] == "kill" else "要注意"
+                kill_msg_parts.append(
+                    f"{emoji} *{kr['name']}* — {action}\n"
+                    f"  理由: {kr['reason']}\n"
+                    f"  平均スコア: {kr['avg_score']} / CV: {kr['total_cv']}件 / データ日数: {kr['days_active']}日"
+                )
+            slack_notify("\n".join(kill_msg_parts))
+
+        # 7. Notify insights
         total_insights = len(insights)
         if total_insights > 0:
             high_priority = [i for i in insights if i.get("priority") == "high"]
@@ -71,13 +95,16 @@ def main():
                     msg += f"\n> {hp.get('content', '')[:80]}"
             if expired_count:
                 msg += f"\n:wastebasket: {expired_count}件の古いインサイト失効"
+            if kill_flagged:
+                msg += f"\n:skull: {kill_flagged}件の事業に撤退推奨フラグ"
             slack_notify(msg)
 
-        update_status("7_learning_engine", "success", f"{total_insights}件インサイト", {
+        update_status("7_learning_engine", "success", f"{total_insights}件インサイト / {kill_flagged}件撤退推奨", {
             "performance_records": len(performance),
             "trends_analyzed": len(trends),
             "insights_generated": total_insights,
             "expired": expired_count,
+            "kill_flagged": kill_flagged,
         })
         logger.info(f"=== Learning engine complete: {total_insights} insights ===")
 

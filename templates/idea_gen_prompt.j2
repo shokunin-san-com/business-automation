@@ -4,6 +4,15 @@
 - 業界カテゴリ: {{ target_industries }}
 - トレンドキーワード: {{ trend_keywords }}
 
+{% if ceo_profile_context %}
+## CEO経歴プロファイル
+以下はCEOの経歴・スキル・得意領域です。
+事業案の生成時に「経歴適合度」（0〜100）を各案に付与してください。
+適合度が高い＝CEOの経験・人脈・資格を直接活用でき、競合優位性が生まれる事業案です。
+
+{{ ceo_profile_context }}
+{% endif %}
+
 {% if knowledge_context %}
 ## 参考知識ベース（書籍・ドキュメント）
 以下の知見を踏まえ、フレームワークに基づいた質の高い事業案を生成してください：
@@ -43,7 +52,9 @@
     "description": "事業概要（100〜200文字）",
     "target_audience": "ターゲット顧客（具体的に）",
     "market_size": "想定市場規模（例: 年間500億円）",
-    "differentiator": "差別化ポイント・競合優位性（50〜100文字）"
+    "differentiator": "差別化ポイント・競合優位性（50〜100文字）",
+    "ceo_fit_score": "CEOの経歴との適合度（0-100。use_ceo_profileがfalseの場合はnull）",
+    "ceo_fit_reason": "適合度の理由（50文字以内。use_ceo_profileがfalseの場合はnull）"
   }
 ]
 ```

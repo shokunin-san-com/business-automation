@@ -49,6 +49,72 @@ export async function GET() {
 }
 
 /**
+ * PATCH /api/dashboard/scheduler
+ * Body: { jobId: "schedule-idea-generator", schedule: "0 9 * * *", timeZone?: "Asia/Tokyo" }
+ * Updates the cron schedule for a Cloud Scheduler job.
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { jobId, schedule, timeZone = "Asia/Tokyo" } = body as {
+      jobId: string;
+      schedule: string;
+      timeZone?: string;
+    };
+
+    if (!jobId || !schedule) {
+      return NextResponse.json({ error: "jobId and schedule are required" }, { status: 400 });
+    }
+
+    // Basic cron validation: must have exactly 5 fields
+    const cronFields = schedule.trim().split(/\s+/);
+    if (cronFields.length !== 5) {
+      return NextResponse.json(
+        { error: "Invalid cron format. Expected 5 fields: minute hour day month weekday" },
+        { status: 400 },
+      );
+    }
+
+    // Ensure the scheduler name is valid
+    if (!ALL_SCHEDULERS.includes(jobId)) {
+      return NextResponse.json({ error: "Unknown scheduler job" }, { status: 400 });
+    }
+
+    const token = await getAccessToken();
+    const jobPath = `projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${jobId}`;
+    const url = `https://cloudscheduler.googleapis.com/v1/${jobPath}?updateMask=schedule,timeZone`;
+
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        schedule,
+        timeZone,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("Scheduler PATCH error:", res.status, errText);
+      return NextResponse.json({ error: "Failed to update schedule", detail: errText }, { status: res.status });
+    }
+
+    const updated = await res.json();
+    return NextResponse.json({
+      ok: true,
+      schedule: updated.schedule,
+      timeZone: updated.timeZone,
+    });
+  } catch (err) {
+    console.error("Scheduler PATCH error:", err);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+}
+
+/**
  * POST /api/dashboard/scheduler
  * Body: { scheduler: "schedule-idea-generator", action: "pause" | "resume" }
  *   OR  { action: "pause_all" | "resume_all" }

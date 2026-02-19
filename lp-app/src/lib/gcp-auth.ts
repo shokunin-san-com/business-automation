@@ -98,4 +98,8 @@ export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = 
     jobId: "learning-engine",
     schedulers: ["schedule-learning-engine"],
   },
+  "8_ads_creator": {
+    jobId: "ads-creator",
+    schedulers: ["schedule-ads-creator"],
+  },
 };

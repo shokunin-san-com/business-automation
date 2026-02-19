@@ -22,6 +22,7 @@ SCRIPT_MAP = {
     "5_slack_reporter": "scripts.5_slack_reporter",
     "6_ads_monitor": "scripts.6_ads_monitor",
     "7_learning_engine": "scripts.7_learning_engine",
+    "8_ads_creator": "scripts.8_ads_creator",
 }
 
 

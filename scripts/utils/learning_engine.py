@@ -329,6 +329,9 @@ def _save_insights(insights: list[dict]) -> list[dict]:
     rows = []
     saved = []
 
+    from utils.ceo_profile import is_ceo_profile_enabled
+    source_mode = "ceo_profile" if is_ceo_profile_enabled() else "neutral"
+
     for ins in insights:
         content = ins.get("content", ins.get("insight", ""))
         if not content:
@@ -338,7 +341,9 @@ def _save_insights(insights: list[dict]) -> list[dict]:
         category = ins.get("category", "general")
         priority = ins.get("priority", "medium")
         confidence = ins.get("confidence", 0.7)
-        context = json.dumps(ins.get("context", {}), ensure_ascii=False)
+        ctx = ins.get("context", {})
+        ctx["source_mode"] = source_mode
+        context = json.dumps(ctx, ensure_ascii=False)
         insight_type = ins.get("type", "insight")
 
         rows.append([
@@ -364,6 +369,15 @@ def _save_insights(insights: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Learning context for prompt injection
 # ---------------------------------------------------------------------------
+
+def _get_source_mode(row: dict) -> str:
+    """Extract source_mode from context_json."""
+    try:
+        ctx = json.loads(row.get("context_json", "{}"))
+        return ctx.get("source_mode", "")
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
 
 def get_learning_context(
     categories: list[str] | None = None,
@@ -400,6 +414,14 @@ def get_learning_context(
     active = [
         r for r in active
         if not r.get("expires_at") or str(r.get("expires_at", "")) >= today
+    ]
+
+    # Filter by source_mode to avoid cross-contamination
+    from utils.ceo_profile import is_ceo_profile_enabled
+    current_mode = "ceo_profile" if is_ceo_profile_enabled() else "neutral"
+    active = [
+        r for r in active
+        if _get_source_mode(r) in (current_mode, "neutral", "")
     ]
 
     if not active:

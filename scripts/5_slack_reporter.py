@@ -213,6 +213,26 @@ def build_report() -> str:
         lines.extend(["", "*--- AI学習インサイト ---*"])
         lines.extend(insight_lines)
 
+    # Budget reallocation proposal
+    try:
+        from utils.budget_allocator import generate_reallocation_proposal
+
+        budget = generate_reallocation_proposal(lookback_days=7)
+        if budget.get("businesses"):
+            lines.extend(["", "*--- 予算配分提案 ---*"])
+            lines.append(f"月間予算: \u00A5{budget['total_monthly_budget']:,}")
+            for b in budget["businesses"]:
+                arrow = ":arrow_up:" if b["change_pct"] > 5 else ":arrow_down:" if b["change_pct"] < -5 else ":arrow_right:"
+                proposed_yen = int(budget["total_monthly_budget"] * b["proposed_allocation_pct"] / 100)
+                lines.append(
+                    f"  {arrow} *{b['name']}*: {b['proposed_allocation_pct']:.0f}% "
+                    f"(\u00A5{proposed_yen:,}) — {b['rationale']}"
+                )
+            if budget.get("summary"):
+                lines.append(f"\n:bulb: {budget['summary']}")
+    except Exception as e:
+        logger.warning(f"Budget allocation failed: {e}")
+
     lines.extend(["", f"<{dashboard_url}|ダッシュボードで詳細を確認>"])
 
     return "\n".join(lines)

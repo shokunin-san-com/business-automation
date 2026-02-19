@@ -30,6 +30,8 @@ ADS_YAML_PATH = CREDENTIALS_DIR / "google_ads.yaml"
 # Safety limits
 MAX_BID_ADJUSTMENT_PERCENT = 15  # ±15% max per adjustment
 BUDGET_ALERT_THRESHOLD = 0.80   # Alert at 80% budget consumed
+MAX_DAILY_BUDGET = 5000         # Max daily budget in yen for auto-created campaigns
+MAX_KEYWORDS_PER_GROUP = 20     # Max keywords per ad group
 
 
 def _get_client():
@@ -304,4 +306,205 @@ def pause_campaign(campaign_id: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"Failed to pause campaign: {e}")
+        return False
+
+
+def create_search_campaign(
+    name: str,
+    daily_budget_yen: int,
+    keywords: list[str],
+    negative_keywords: list[str] | None = None,
+    headlines: list[str] | None = None,
+    descriptions: list[str] | None = None,
+) -> dict:
+    """Create a Google Ads search campaign in PAUSED state.
+
+    Returns dict with campaign_id, ad_group_id, or empty dict on failure.
+    Safety: budget capped at MAX_DAILY_BUDGET, keywords capped at MAX_KEYWORDS_PER_GROUP.
+    """
+    # Safety clamps
+    clamped_budget = min(daily_budget_yen, MAX_DAILY_BUDGET)
+    if clamped_budget != daily_budget_yen:
+        logger.warning(f"Budget clamped: {daily_budget_yen}¥ → {clamped_budget}¥")
+
+    clamped_keywords = keywords[:MAX_KEYWORDS_PER_GROUP]
+    if len(clamped_keywords) != len(keywords):
+        logger.warning(f"Keywords clamped: {len(keywords)} → {len(clamped_keywords)}")
+
+    client = _get_client()
+    if not client:
+        return {}
+
+    try:
+        budget_micros = clamped_budget * 1_000_000
+
+        # 1. Create campaign budget
+        budget_service = client.get_service("CampaignBudgetService")
+        budget_op = client.get_type("CampaignBudgetOperation")
+        budget_obj = budget_op.create
+        budget_obj.name = f"{name}_budget_{datetime.now().strftime('%Y%m%d%H%M')}"
+        budget_obj.amount_micros = budget_micros
+        budget_obj.delivery_method = client.enums.BudgetDeliveryMethodEnum.STANDARD
+
+        budget_response = budget_service.mutate_campaign_budgets(
+            customer_id=CUSTOMER_ID,
+            operations=[budget_op],
+        )
+        budget_resource = budget_response.results[0].resource_name
+        logger.info(f"Budget created: {budget_resource}")
+
+        # 2. Create campaign (PAUSED)
+        campaign_service = client.get_service("CampaignService")
+        campaign_op = client.get_type("CampaignOperation")
+        campaign_obj = campaign_op.create
+        campaign_obj.name = name
+        campaign_obj.status = client.enums.CampaignStatusEnum.PAUSED
+        campaign_obj.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.SEARCH
+        campaign_obj.campaign_budget = budget_resource
+
+        # Manual CPC bidding
+        campaign_obj.manual_cpc.enhanced_cpc_enabled = False
+
+        # Network settings
+        campaign_obj.network_settings.target_google_search = True
+        campaign_obj.network_settings.target_search_network = False
+        campaign_obj.network_settings.target_content_network = False
+
+        campaign_response = campaign_service.mutate_campaigns(
+            customer_id=CUSTOMER_ID,
+            operations=[campaign_op],
+        )
+        campaign_resource = campaign_response.results[0].resource_name
+        campaign_id = campaign_resource.split("/")[-1]
+        logger.info(f"Campaign created (PAUSED): {campaign_resource}")
+
+        # 3. Create ad group
+        ad_group_service = client.get_service("AdGroupService")
+        ad_group_op = client.get_type("AdGroupOperation")
+        ad_group_obj = ad_group_op.create
+        ad_group_obj.name = f"{name}_adgroup"
+        ad_group_obj.campaign = campaign_resource
+        ad_group_obj.status = client.enums.AdGroupStatusEnum.ENABLED
+        ad_group_obj.type_ = client.enums.AdGroupTypeEnum.SEARCH_STANDARD
+
+        # Default CPC bid
+        ad_group_obj.cpc_bid_micros = 100 * 1_000_000  # 100 yen default
+
+        ad_group_response = ad_group_service.mutate_ad_groups(
+            customer_id=CUSTOMER_ID,
+            operations=[ad_group_op],
+        )
+        ad_group_resource = ad_group_response.results[0].resource_name
+        ad_group_id = ad_group_resource.split("/")[-1]
+        logger.info(f"Ad group created: {ad_group_resource}")
+
+        # 4. Create Responsive Search Ad (RSA)
+        if headlines and descriptions:
+            ad_service = client.get_service("AdGroupAdService")
+            ad_op = client.get_type("AdGroupAdOperation")
+            ad_obj = ad_op.create
+            ad_obj.ad_group = ad_group_resource
+            ad_obj.status = client.enums.AdGroupAdStatusEnum.ENABLED
+
+            rsa = ad_obj.ad.responsive_search_ad
+            for h in headlines[:15]:  # RSA max 15 headlines
+                headline_asset = client.get_type("AdTextAsset")
+                headline_asset.text = h[:30]  # Max 30 chars per headline
+                rsa.headlines.append(headline_asset)
+
+            for d in descriptions[:4]:  # RSA max 4 descriptions
+                desc_asset = client.get_type("AdTextAsset")
+                desc_asset.text = d[:90]  # Max 90 chars per description
+                rsa.descriptions.append(desc_asset)
+
+            ad_obj.ad.final_urls.append(f"https://lp-app-pi.vercel.app")
+
+            ad_service.mutate_ad_group_ads(
+                customer_id=CUSTOMER_ID,
+                operations=[ad_op],
+            )
+            logger.info("RSA created")
+
+        # 5. Add keywords
+        criterion_service = client.get_service("AdGroupCriterionService")
+        keyword_ops = []
+        for kw in clamped_keywords:
+            kw_op = client.get_type("AdGroupCriterionOperation")
+            kw_obj = kw_op.create
+            kw_obj.ad_group = ad_group_resource
+            kw_obj.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+            kw_obj.keyword.text = kw
+            kw_obj.keyword.match_type = client.enums.KeywordMatchTypeEnum.BROAD
+            keyword_ops.append(kw_op)
+
+        if keyword_ops:
+            criterion_service.mutate_ad_group_criteria(
+                customer_id=CUSTOMER_ID,
+                operations=keyword_ops,
+            )
+            logger.info(f"Added {len(keyword_ops)} keywords")
+
+        # 6. Add negative keywords
+        if negative_keywords:
+            neg_ops = []
+            for nkw in negative_keywords[:20]:
+                neg_op = client.get_type("AdGroupCriterionOperation")
+                neg_obj = neg_op.create
+                neg_obj.ad_group = ad_group_resource
+                neg_obj.keyword.text = nkw
+                neg_obj.keyword.match_type = client.enums.KeywordMatchTypeEnum.EXACT
+                neg_obj.negative = True
+                neg_ops.append(neg_op)
+
+            if neg_ops:
+                criterion_service.mutate_ad_group_criteria(
+                    customer_id=CUSTOMER_ID,
+                    operations=neg_ops,
+                )
+                logger.info(f"Added {len(neg_ops)} negative keywords")
+
+        result = {
+            "campaign_id": campaign_id,
+            "campaign_resource": campaign_resource,
+            "ad_group_id": ad_group_id,
+            "budget_resource": budget_resource,
+            "status": "PAUSED",
+        }
+        logger.info(f"Campaign creation complete: {name} (ID: {campaign_id})")
+        return result
+
+    except Exception as e:
+        logger.error(f"Campaign creation failed: {e}")
+        return {}
+
+
+def activate_campaign(campaign_id: str) -> bool:
+    """Enable a previously paused campaign (after human approval)."""
+    client = _get_client()
+    if not client:
+        return False
+
+    try:
+        campaign_service = client.get_service("CampaignService")
+        resource_name = campaign_service.campaign_path(CUSTOMER_ID, campaign_id)
+
+        operation = client.get_type("CampaignOperation")
+        campaign = operation.update
+        campaign.resource_name = resource_name
+        campaign.status = client.enums.CampaignStatusEnum.ENABLED
+
+        client.copy_from(
+            operation.update_mask,
+            client.get_type("FieldMask")(paths=["status"]),
+        )
+
+        campaign_service.mutate_campaigns(
+            customer_id=CUSTOMER_ID,
+            operations=[operation],
+        )
+
+        logger.info(f"Campaign activated: {campaign_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to activate campaign: {e}")
         return False

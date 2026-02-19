@@ -26,6 +26,7 @@ from utils.status_writer import update_status
 from utils.pdf_knowledge import get_knowledge_summary
 from utils.exploration_context import get_exploration_context
 from utils.learning_engine import get_learning_context
+from utils.ceo_profile import get_ceo_profile_context
 
 logger = get_logger("idea_generator", "idea_generator.log")
 
@@ -70,6 +71,9 @@ def generate_ideas() -> list[dict]:
     # Load learning context (AI insights + human directives)
     learning_context = get_learning_context(categories=["idea_generation"])
 
+    # Load CEO profile context (if enabled)
+    ceo_profile_context = get_ceo_profile_context()
+
     template = jinja_env.get_template("idea_gen_prompt.j2")
     prompt = template.render(
         target_industries=target_industries,
@@ -78,6 +82,7 @@ def generate_ideas() -> list[dict]:
         knowledge_context=knowledge_context,
         exploration_context=exploration_context,
         learning_context=learning_context,
+        ceo_profile_context=ceo_profile_context,
     )
 
     logger.info(f"Generating {num_ideas} business ideas...")
@@ -118,6 +123,8 @@ def save_ideas_to_sheets(ideas: list[dict]) -> list[dict]:
             idea.get("market_size", ""),        # market_size
             idea.get("differentiator", ""),     # differentiator
             now,                               # created_at
+            idea.get("ceo_fit_score", ""),      # ceo_fit_score
+            idea.get("ceo_fit_reason", ""),     # ceo_fit_reason
         ])
         saved_ideas.append({
             "id": slug,
