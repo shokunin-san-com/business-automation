@@ -225,6 +225,9 @@ DEFAULT_SETTINGS = [
     ["kill_criteria_enabled", "true", "損切り判定の有効/無効"],
     ["monthly_ad_budget", "100000", "月間広告予算（円）"],
     ["ads_daily_budget", "3000", "広告自動出稿のデフォルト日次予算（円）"],
+    ["sender_name", "みゆ", "フォーム営業の送信者名"],
+    ["sender_email", "info02@shokunin-san.com", "フォーム営業の返信先メールアドレス"],
+    ["sender_company", "MarketProbe Project", "フォーム営業で使用する会社名"],
 ]
 
 

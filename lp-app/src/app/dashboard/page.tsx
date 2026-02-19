@@ -503,6 +503,7 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.error("Upload error:", err);
+      alert("アップロード中にエラーが発生しました。PDFが大きすぎるか、接続がタイムアウトした可能性があります。");
     } finally {
       setUploading(false);
     }

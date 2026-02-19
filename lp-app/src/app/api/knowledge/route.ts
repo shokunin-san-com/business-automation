@@ -164,29 +164,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Upload to GCS
+    // 1. Upload to GCS (non-blocking — skip if fails)
     const gcsPath = `knowledge/${filename}`;
     const fileBuffer = Buffer.from(await file.arrayBuffer());
 
-    const token = await getAccessToken();
-    const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${GCS_BUCKET}/o?uploadType=media&name=${encodeURIComponent(gcsPath)}`;
+    let gcsUploaded = false;
+    try {
+      const token = await getAccessToken();
+      const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${GCS_BUCKET}/o?uploadType=media&name=${encodeURIComponent(gcsPath)}`;
 
-    const uploadRes = await fetch(uploadUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/pdf",
-      },
-      body: fileBuffer,
-    });
+      const uploadRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/pdf",
+        },
+        body: fileBuffer,
+      });
 
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text();
-      console.error("GCS upload error:", errText);
-      return NextResponse.json(
-        { error: "Failed to upload to GCS" },
-        { status: 500 },
-      );
+      if (uploadRes.ok) {
+        gcsUploaded = true;
+      } else {
+        const errText = await uploadRes.text();
+        console.warn("GCS upload failed (continuing without storage):", errText);
+      }
+    } catch (gcsErr) {
+      console.warn("GCS upload error (continuing without storage):", gcsErr);
     }
 
     // 2. Extract knowledge via AI (Gemini primary → Claude fallback)
@@ -235,7 +238,7 @@ export async function POST(request: NextRequest) {
     await appendRows("knowledge_base", [[
       docId,
       filename,
-      gcsPath,
+      gcsUploaded ? gcsPath : "",
       docTitle,
       summary,
       chaptersJson,

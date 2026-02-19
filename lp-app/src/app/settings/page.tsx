@@ -45,29 +45,43 @@ export default function SettingsPage() {
   };
 
   // Group settings for display
+  const senderSettings = settings.filter((s) =>
+    ["sender_name", "sender_email", "sender_company"].includes(s.key)
+  );
   const ideaSettings = settings.filter((s) =>
     ["target_industries", "trend_keywords", "ideas_per_run"].includes(s.key)
   );
   const salesSettings = settings.filter((s) =>
     ["form_sales_per_day", "lp_base_url"].includes(s.key)
   );
+  const ceoSettings = settings.filter((s) =>
+    ["use_ceo_profile", "ceo_profile_json"].includes(s.key)
+  );
+  const killSettings = settings.filter((s) =>
+    ["kill_criteria_enabled", "kill_criteria_days", "kill_criteria_min_cv", "kill_criteria_min_score"].includes(s.key)
+  );
+  const budgetSettings = settings.filter((s) =>
+    ["monthly_ad_budget", "ads_daily_budget"].includes(s.key)
+  );
   const systemSettings = settings.filter((s) =>
     ["slack_notification", "auto_approve", "risk_threshold"].includes(s.key)
   );
-  const otherSettings = settings.filter(
-    (s) => ![...ideaSettings, ...salesSettings, ...systemSettings].find((is) => is.key === s.key)
-  );
+  const knownKeys = new Set([
+    ...senderSettings, ...ideaSettings, ...salesSettings, ...ceoSettings,
+    ...killSettings, ...budgetSettings, ...systemSettings,
+  ].map((s) => s.key));
+  const otherSettings = settings.filter((s) => !knownKeys.has(s.key));
 
   return (
     <AppShell>
       <header className="sticky top-0 z-30 hidden lg:flex h-14 items-center justify-between border-b border-white/[.06] bg-[#0a0a0f]/80 px-6 backdrop-blur-xl">
-        <h1 className="text-sm font-medium text-white/60">Settings</h1>
+        <h1 className="text-sm font-medium text-white/60">設定</h1>
         <button
           onClick={handleSave}
           disabled={saving}
           className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition-all hover:bg-blue-500 disabled:opacity-50"
         >
-          {saving ? "Saving..." : saved ? "\u2713 Saved" : "Save Changes"}
+          {saving ? "保存中..." : saved ? "✓ 保存しました" : "変更を保存"}
         </button>
       </header>
 
@@ -82,28 +96,64 @@ export default function SettingsPage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            <p className="mt-4 text-sm text-white/30">No settings available yet</p>
-            <p className="mt-1 text-[11px] text-white/15">Run setup_sheets.py first to initialize settings</p>
+            <p className="mt-4 text-sm text-white/30">設定がまだありません</p>
+            <p className="mt-1 text-[11px] text-white/15">setup_sheets.py を実行して初期設定してください</p>
           </div>
         ) : (
           <>
+            {/* Sender Settings */}
+            {senderSettings.length > 0 && (
+              <SettingsSection title="📧 送信者情報" description="フォーム営業で使用される送信者の情報">
+                {senderSettings.map((s) => (
+                  <SettingRow key={s.key} setting={s} onChange={updateSetting} />
+                ))}
+              </SettingsSection>
+            )}
+
             {/* Idea Generation Settings */}
-            <SettingsSection title="Idea Generation" description="Configure how business ideas are generated">
+            <SettingsSection title="💡 事業案生成" description="事業案の自動生成に関する設定">
               {ideaSettings.map((s) => (
                 <SettingRow key={s.key} setting={s} onChange={updateSetting} />
               ))}
             </SettingsSection>
 
             {/* Sales Settings */}
-            <SettingsSection title="Form Sales" description="Outbound sales automation settings">
+            <SettingsSection title="✉️ フォーム営業" description="自動フォーム営業に関する設定">
               {salesSettings.map((s) => (
                 <SettingRow key={s.key} setting={s} onChange={updateSetting} />
               ))}
             </SettingsSection>
 
+            {/* CEO Profile Settings */}
+            {ceoSettings.length > 0 && (
+              <SettingsSection title="👤 CEO経歴プロファイラー" description="CEO経歴に基づく事業案スコアリング設定">
+                {ceoSettings.map((s) => (
+                  <SettingRow key={s.key} setting={s} onChange={updateSetting} />
+                ))}
+              </SettingsSection>
+            )}
+
+            {/* Kill Criteria Settings */}
+            {killSettings.length > 0 && (
+              <SettingsSection title="🛑 損切りジャッジ" description="低パフォーマンス事業の自動検出基準">
+                {killSettings.map((s) => (
+                  <SettingRow key={s.key} setting={s} onChange={updateSetting} />
+                ))}
+              </SettingsSection>
+            )}
+
+            {/* Budget Settings */}
+            {budgetSettings.length > 0 && (
+              <SettingsSection title="💰 広告予算" description="Google Ads 予算設定">
+                {budgetSettings.map((s) => (
+                  <SettingRow key={s.key} setting={s} onChange={updateSetting} />
+                ))}
+              </SettingsSection>
+            )}
+
             {/* System Settings */}
             {systemSettings.length > 0 && (
-              <SettingsSection title="System" description="Notification and automation settings">
+              <SettingsSection title="⚙️ システム" description="通知・自動化に関する設定">
                 {systemSettings.map((s) => (
                   <SettingRow key={s.key} setting={s} onChange={updateSetting} />
                 ))}
@@ -112,7 +162,7 @@ export default function SettingsPage() {
 
             {/* Other Settings */}
             {otherSettings.length > 0 && (
-              <SettingsSection title="Other" description="Additional configuration">
+              <SettingsSection title="📋 その他" description="その他の設定項目">
                 {otherSettings.map((s) => (
                   <SettingRow key={s.key} setting={s} onChange={updateSetting} />
                 ))}
@@ -126,7 +176,7 @@ export default function SettingsPage() {
                 disabled={saving}
                 className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-all hover:bg-blue-500 disabled:opacity-50"
               >
-                {saving ? "Saving..." : saved ? "\u2713 Saved" : "Save Changes"}
+                {saving ? "保存中..." : saved ? "✓ 保存しました" : "変更を保存"}
               </button>
             </div>
           </>
@@ -157,11 +207,29 @@ function SettingsSection({
 }
 
 const SETTING_LABELS: Record<string, { label: string; description: string }> = {
+  // Sender info
+  sender_name: { label: "送信者名", description: "フォーム営業の差出人名" },
+  sender_email: { label: "メールアドレス", description: "返信先メールアドレス" },
+  sender_company: { label: "会社名", description: "フォーム営業で使用する社名" },
+  // Idea generation
   target_industries: { label: "ターゲット業界", description: "事業案生成の対象業界（カンマ区切り）" },
   trend_keywords: { label: "トレンドキーワード", description: "事業案生成に使うキーワード" },
   ideas_per_run: { label: "生成数/回", description: "1回の実行で生成する事業案の数" },
+  // Form sales
   form_sales_per_day: { label: "フォーム送信数/日", description: "1日あたりの最大フォーム送信数" },
   lp_base_url: { label: "LP ベースURL", description: "LP公開先のベースURL" },
+  // CEO profile
+  use_ceo_profile: { label: "CEO経歴スコアリング", description: "true / false（有効化するとCEO経歴でスコアリング）" },
+  ceo_profile_json: { label: "CEO経歴JSON", description: "JSON形式のCEO経歴データ" },
+  // Kill criteria
+  kill_criteria_enabled: { label: "損切り判定", description: "true / false（自動損切り判定の有効化）" },
+  kill_criteria_days: { label: "判定期間（日数）", description: "この日数経過後に損切り評価を実施" },
+  kill_criteria_min_cv: { label: "最低CV数", description: "この数未満のCV数で損切り候補に" },
+  kill_criteria_min_score: { label: "最低スコア", description: "この値未満のスコアで損切り候補に" },
+  // Budget
+  monthly_ad_budget: { label: "月間広告予算（円）", description: "Google Ads の月間予算上限" },
+  ads_daily_budget: { label: "日次広告予算（円）", description: "キャンペーンあたりの日次予算" },
+  // System
   slack_notification: { label: "Slack通知", description: "enabled / disabled" },
   auto_approve: { label: "自動承認", description: "事業案の自動承認（enabled / disabled）" },
   risk_threshold: { label: "リスク閾値", description: "SNS投稿・フォーム営業のリスク判定レベル（low / medium / high）" },
@@ -179,20 +247,32 @@ function SettingRow({
     description: "",
   };
 
+  // Use textarea for long values like JSON
+  const isLongValue = setting.key === "ceo_profile_json" || setting.value.length > 100;
+
   return (
-    <div className="flex items-center gap-4 rounded-xl bg-black/20 p-3">
+    <div className={`flex ${isLongValue ? "flex-col gap-2" : "items-center gap-4"} rounded-xl bg-black/20 p-3`}>
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium capitalize">{meta.label}</p>
+        <p className="text-xs font-medium">{meta.label}</p>
         {meta.description && (
           <p className="text-[10px] text-white/30">{meta.description}</p>
         )}
       </div>
-      <input
-        type="text"
-        value={setting.value}
-        onChange={(e) => onChange(setting.key, e.target.value)}
-        className="w-48 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white outline-none focus:border-blue-500/50 transition-colors"
-      />
+      {isLongValue ? (
+        <textarea
+          value={setting.value}
+          onChange={(e) => onChange(setting.key, e.target.value)}
+          rows={3}
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500/50 transition-colors resize-y"
+        />
+      ) : (
+        <input
+          type="text"
+          value={setting.value}
+          onChange={(e) => onChange(setting.key, e.target.value)}
+          className="w-48 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white outline-none focus:border-blue-500/50 transition-colors"
+        />
+      )}
     </div>
   );
 }

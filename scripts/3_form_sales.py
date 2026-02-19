@@ -101,8 +101,14 @@ def scrape_and_register(idea: dict, max_per_idea: int = 5) -> int:
     return added
 
 
-def generate_sales_message(idea: dict, target: dict, learning_context: str = "") -> str:
+def generate_sales_message(idea: dict, target: dict, learning_context: str = "", settings: dict | None = None) -> str:
     """Generate a personalized sales message using Claude API."""
+    # Use settings from Sheets if available, fall back to env vars
+    s = settings or {}
+    sender_company = s.get("sender_company", "") or YOUR_COMPANY_NAME
+    sender_name = s.get("sender_name", "") or YOUR_NAME
+    sender_email = s.get("sender_email", "") or YOUR_EMAIL
+
     template = jinja_env.get_template("sales_message_prompt.j2")
     prompt = template.render(
         service_name=idea["name"],
@@ -112,9 +118,9 @@ def generate_sales_message(idea: dict, target: dict, learning_context: str = "")
         company_name=target["company_name"],
         industry=target.get("industry", ""),
         company_url=target["url"],
-        sender_company=YOUR_COMPANY_NAME,
-        sender_name=YOUR_NAME,
-        sender_email=YOUR_EMAIL,
+        sender_company=sender_company,
+        sender_name=sender_name,
+        sender_email=sender_email,
         learning_context=learning_context,
     )
 
@@ -131,6 +137,7 @@ async def process_targets(
     targets: list[dict],
     daily_limit: int = 5,
     learning_context: str = "",
+    settings: dict | None = None,
 ) -> dict:
     """Generate messages, evaluate risk, and submit forms.
 
@@ -146,7 +153,7 @@ async def process_targets(
 
         # Generate message
         logger.info(f"Generating message for {target['company_name']}")
-        message = generate_sales_message(idea, target, learning_context=learning_context)
+        message = generate_sales_message(idea, target, learning_context=learning_context, settings=settings)
 
         # Update message in Sheets
         row_idx = find_row_index("form_sales_targets", "form_url", target["form_url"])
@@ -242,7 +249,7 @@ def main():
         totals = {"sent": 0, "reviewed": 0, "blocked": 0}
 
         for idea in active_ideas:
-            result = asyncio.run(process_targets(idea, targets, daily_limit, learning_context=learning_context))
+            result = asyncio.run(process_targets(idea, targets, daily_limit, learning_context=learning_context, settings=settings))
             for k in totals:
                 totals[k] += result.get(k, 0)
 

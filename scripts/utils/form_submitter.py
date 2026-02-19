@@ -28,6 +28,9 @@ async def submit_form(
     message: str,
     company_name: str = "",
     dry_run: bool = True,
+    sender_name: str = "",
+    sender_email: str = "",
+    sender_company: str = "",
 ) -> dict:
     """Fill and submit a contact form.
 
@@ -36,6 +39,9 @@ async def submit_form(
         message: The sales message body
         company_name: Optional override for sender company name
         dry_run: If True, fill form but don't click submit
+        sender_name: Override sender name (from settings)
+        sender_email: Override sender email (from settings)
+        sender_company: Override sender company (from settings)
 
     Returns:
         {"status": "success"|"failed"|"dry_run", "detail": str}
@@ -83,7 +89,7 @@ async def submit_form(
                     continue
 
                 # Fill value
-                value = _get_value(field_type, message, company_name)
+                value = _get_value(field_type, message, company_name, sender_name, sender_email, sender_company)
                 if not value:
                     continue
 
@@ -135,12 +141,19 @@ def _match_field_type(search_text: str) -> str | None:
     return None
 
 
-def _get_value(field_type: str, message: str, company_name: str) -> str:
+def _get_value(
+    field_type: str,
+    message: str,
+    company_name: str,
+    sender_name: str = "",
+    sender_email: str = "",
+    sender_company: str = "",
+) -> str:
     """Get the value to fill for a given field type."""
     values = {
-        "name": YOUR_NAME,
-        "email": YOUR_EMAIL,
-        "company": company_name or YOUR_COMPANY_NAME,
+        "name": sender_name or YOUR_NAME,
+        "email": sender_email or YOUR_EMAIL,
+        "company": sender_company or company_name or YOUR_COMPANY_NAME,
         "phone": "",  # Don't auto-fill phone
         "message": message,
     }
