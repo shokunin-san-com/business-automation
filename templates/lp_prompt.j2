@@ -1,0 +1,86 @@
+あなたは日本市場向けのコンバージョン最適化に長けたWebマーケターです。
+以下の事業案に対して、高品質なランディングページのコンテンツを生成してください。
+
+## 事業案情報
+- 事業名: {{ name }}
+- カテゴリ: {{ category }}
+- 概要: {{ description }}
+- ターゲット: {{ target_audience }}
+- 想定市場規模: {{ market_size }}
+- 差別化ポイント: {{ differentiator }}
+
+## 会社情報
+- 会社名: {{ company_name }}
+- 担当者: {{ your_name }}
+- メール: {{ your_email }}
+
+{% if knowledge_context %}
+## マーケティング・事業フレームワーク参考
+以下のフレームワークに基づき、説得力のあるLPを構成してください：
+
+{{ knowledge_context }}
+{% endif %}
+
+{% if learning_context %}
+## 過去の学習・運用者指示
+以下の過去データから得られたLP改善の教訓・運用者の指示を反映してください：
+
+{{ learning_context }}
+{% endif %}
+
+## 生成要件
+1. ファーストビューで課題を提起し、解決策を提示する構成
+2. ターゲット顧客が共感する具体的なペインポイントを含める
+3. 信頼性を高める要素（実績数値、権威性、社会的証明）を含める
+4. 明確なCTA（資料請求/無料相談/メール登録など最適なものを選択）
+5. 日本語で自然な表現
+
+## 出力フォーマット
+以下のJSON形式で出力してください。JSON以外のテキストは含めないでください。
+
+```json
+{
+  "headline": "メインキャッチコピー（30文字以内）",
+  "subheadline": "サブキャッチ（50文字以内）",
+  "sections": [
+    {
+      "type": "pain_points",
+      "title": "セクションタイトル",
+      "items": [
+        {"icon": "emoji", "title": "項目タイトル", "description": "説明文"}
+      ]
+    },
+    {
+      "type": "solution",
+      "title": "セクションタイトル",
+      "description": "サービスの解決策の説明（200文字程度）"
+    },
+    {
+      "type": "features",
+      "title": "セクションタイトル",
+      "items": [
+        {"icon": "emoji", "title": "特徴タイトル", "description": "説明文"}
+      ]
+    },
+    {
+      "type": "social_proof",
+      "title": "セクションタイトル",
+      "items": [
+        {"metric": "数値", "label": "ラベル"}
+      ]
+    },
+    {
+      "type": "faq",
+      "title": "よくあるご質問",
+      "items": [
+        {"question": "質問", "answer": "回答"}
+      ]
+    }
+  ],
+  "cta_text": "CTAボタンのテキスト",
+  "cta_action": "mailto:{{ your_email }}",
+  "meta_description": "SEO用メタディスクリプション（120文字以内）",
+  "og_title": "OGPタイトル",
+  "og_description": "OGP説明文（80文字以内）"
+}
+```

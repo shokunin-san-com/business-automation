@@ -1,0 +1,225 @@
+import { NextResponse } from "next/server";
+import { getAllRows, countRows } from "@/lib/sheets";
+import { getAccessToken, GCP_PROJECT, GCP_REGION, JOB_MAP } from "@/lib/gcp-auth";
+
+// All scheduler job names
+const ALL_SCHEDULERS = Object.values(JOB_MAP).flatMap((j) => j.schedulers);
+
+// ---------------------------------------------------------------------------
+// In-memory cache to avoid hitting Google Sheets quota (60 reads/min/user)
+// ---------------------------------------------------------------------------
+const CACHE_TTL_MS = 15_000; // 15 seconds
+
+interface CacheEntry {
+  data: unknown;
+  fetchedAt: number;
+}
+
+const cache = new Map<string, CacheEntry>();
+
+async function cachedGetAllRows(sheetName: string): Promise<Record<string, string>[]> {
+  const now = Date.now();
+  const entry = cache.get(`rows:${sheetName}`);
+  if (entry && now - entry.fetchedAt < CACHE_TTL_MS) {
+    return entry.data as Record<string, string>[];
+  }
+  const rows = await getAllRows(sheetName);
+  cache.set(`rows:${sheetName}`, { data: rows, fetchedAt: now });
+  return rows;
+}
+
+async function cachedCountRows(sheetName: string): Promise<number> {
+  const now = Date.now();
+  const entry = cache.get(`count:${sheetName}`);
+  if (entry && now - entry.fetchedAt < CACHE_TTL_MS) {
+    return entry.data as number;
+  }
+  const count = await countRows(sheetName);
+  cache.set(`count:${sheetName}`, { data: count, fetchedAt: now });
+  return count;
+}
+
+interface PendingIdea {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  target_audience: string;
+  created_at: string;
+}
+
+/**
+ * GET /api/dashboard
+ *
+ * Reads all data from Google Sheets instead of local filesystem.
+ * Uses a 15-second in-memory cache to stay within Sheets API quota.
+ * - pipeline_status sheet  -> pipeline status
+ * - business_ideas (status=draft) -> pending ideas
+ * - lp_content row count   -> LP count
+ * - Cloud Scheduler API    -> scheduler states
+ * - execution_logs sheet   -> recent execution logs
+ */
+export async function GET() {
+  try {
+    // --- Pipeline status from Sheets ---
+    let pipelineRows: Record<string, string>[] = [];
+    try {
+      pipelineRows = await cachedGetAllRows("pipeline_status");
+    } catch { /* sheet may not exist yet */ }
+
+    const scriptLabels: Record<string, string> = {
+      A_market_research: "\u5E02\u5834\u8ABF\u67FB",
+      B_market_selection: "\u5E02\u5834\u9078\u5B9A",
+      C_competitor_analysis: "\u7AF6\u5408\u8ABF\u67FB",
+      "0_idea_generator": "\u4E8B\u696D\u6848\u751F\u6210",
+      "1_lp_generator": "LP\u751F\u6210",
+      "2_sns_poster": "SNS\u6295\u7A3F",
+      "3_form_sales": "\u30D5\u30A9\u30FC\u30E0\u55B6\u696D",
+      "4_analytics_reporter": "\u5206\u6790\u30FB\u6539\u5584",
+      "5_slack_reporter": "Slack\u30EC\u30DD\u30FC\u30C8",
+      "6_ads_monitor": "\u5E83\u544A\u30E2\u30CB\u30BF\u30EA\u30F3\u30B0",
+    };
+
+    // Build a lookup from pipeline_status rows
+    const statusMap = new Map<string, Record<string, string>>();
+    for (const row of pipelineRows) {
+      if (row.script_name) statusMap.set(row.script_name, row);
+    }
+
+    let lastUpdated = "";
+    const pipeline = Object.entries(scriptLabels).map(([key, label]) => {
+      const s = statusMap.get(key);
+      if (s?.timestamp && s.timestamp > lastUpdated) lastUpdated = s.timestamp;
+
+      let metrics: Record<string, number> = {};
+      if (s?.metrics_json) {
+        try { metrics = JSON.parse(s.metrics_json); } catch { /* ignore */ }
+      }
+
+      return {
+        id: key,
+        label,
+        status: s?.status || "idle",
+        detail: s?.detail || "",
+        metrics,
+        lastRun: s?.timestamp || "",
+      };
+    });
+
+    // --- LP count from lp_content sheet ---
+    let lpCount = 0;
+    try {
+      lpCount = await cachedCountRows("lp_content");
+    } catch { /* sheet may not exist yet */ }
+
+    // --- Pending ideas from business_ideas (status=draft) ---
+    let pendingIdeas: PendingIdea[] = [];
+    try {
+      const ideas = await cachedGetAllRows("business_ideas");
+      pendingIdeas = ideas
+        .filter((row) => row.status === "draft")
+        .map((row) => ({
+          id: row.id || "",
+          name: row.name || "",
+          category: row.category || "",
+          description: row.description || "",
+          target_audience: row.target_audience || "",
+          created_at: row.created_at || "",
+        }));
+    } catch { /* sheet may not exist yet */ }
+
+    // --- Pending markets from market_selection (status=pending_review) ---
+    interface PendingMarket {
+      id: string;
+      market_name: string;
+      total_score: string;
+      recommended_entry_angle: string;
+      rationale: string;
+      created_at: string;
+    }
+    let pendingMarkets: PendingMarket[] = [];
+    try {
+      const marketRows = await cachedGetAllRows("market_selection");
+      pendingMarkets = marketRows
+        .filter((row) => row.status === "pending_review")
+        .map((row) => ({
+          id: row.id || "",
+          market_name: row.market_name || "",
+          total_score: row.total_score || "0",
+          recommended_entry_angle: row.recommended_entry_angle || "",
+          rationale: row.rationale || "",
+          created_at: row.created_at || "",
+        }));
+    } catch { /* sheet may not exist yet */ }
+
+    // --- Scheduler status from Cloud Scheduler API ---
+    let schedulerStatus: Record<string, { state: string; schedule: string; nextRun: string }> = {};
+    try {
+      const token = await getAccessToken();
+      const schedulerUrl = `https://cloudscheduler.googleapis.com/v1/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs`;
+      const schRes = await fetch(schedulerUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (schRes.ok) {
+        const schData = await schRes.json();
+        const jobs = schData.jobs || [];
+        for (const job of jobs) {
+          const shortName = job.name?.split("/").pop() || "";
+          if (ALL_SCHEDULERS.includes(shortName)) {
+            schedulerStatus[shortName] = {
+              state: job.state || "ENABLED",
+              schedule: job.schedule || "",
+              nextRun: job.scheduleTime || "",
+            };
+          }
+        }
+      }
+    } catch {
+      /* scheduler fetch is best-effort */
+    }
+
+    // --- Logs: combine pipeline_status + execution_logs ---
+    const pipelineLogs = pipelineRows
+      .filter((r) => r.detail)
+      .map((r) => ({
+        time: r.timestamp || "",
+        text: `[${r.script_name}] ${r.status}: ${r.detail}`,
+      }));
+
+    let execLogs: { time: string; text: string }[] = [];
+    try {
+      const execRows = await cachedGetAllRows("execution_logs");
+      execLogs = execRows.map((r) => ({
+        time: r.timestamp || "",
+        text: `[${r.job_name}] ${r.trigger}/${r.status}: ${r.detail}`,
+      }));
+    } catch { /* sheet may not exist yet */ }
+
+    const logs = [...pipelineLogs, ...execLogs]
+      .sort((a, b) => b.time.localeCompare(a.time))
+      .slice(0, 100)
+      .map((l) => `${l.time} ${l.text}`);
+
+    return NextResponse.json({
+      pipeline,
+      lpCount,
+      logs,
+      lastUpdated,
+      pendingIdeas,
+      pendingMarkets,
+      schedulerStatus,
+    });
+  } catch (err) {
+    console.error("Dashboard API error:", err);
+    // Return empty state so the dashboard still renders
+    return NextResponse.json({
+      pipeline: [],
+      lpCount: 0,
+      logs: [],
+      lastUpdated: "",
+      pendingIdeas: [],
+      pendingMarkets: [],
+      schedulerStatus: {},
+    });
+  }
+}

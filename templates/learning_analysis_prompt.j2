@@ -1,0 +1,47 @@
+以下のパフォーマンスデータとトレンド分析を基に、今後の事業検証パイプライン改善に活かせるインサイトを生成してください。
+
+## 日次パフォーマンスデータ ({{ today }})
+{% for p in performance %}
+### {{ p.business_id }}
+- PV: {{ p.lp_pageviews }} / セッション: {{ p.lp_sessions }}
+- 直帰率: {{ p.lp_bounce_rate }}% / 平均滞在: {{ p.lp_avg_time }}秒
+- コンバージョン: {{ p.lp_conversions }}
+- SNS投稿: {{ p.sns_posts_count }}件 / フォーム営業: {{ p.form_submissions }}件
+- スコア: {{ p.performance_score }}/100
+{% endfor %}
+
+{% if trends %}
+## トレンド分析 (過去14日間)
+{% for t in trends %}
+### {{ t.business_id }} ({{ t.days_analyzed }}日分析)
+- PVトレンド: {{ t.trends.get('pageviews', 'N/A') }}
+- CVRトレンド: {{ t.trends.get('conversions', 'N/A') }}
+- 直帰率トレンド: {{ t.trends.get('bounce_rate', 'N/A') }}
+- スコアトレンド: {{ t.trends.get('score', 'N/A') }}
+- 平均スコア: {{ t.avg_score }} / 最新: {{ t.latest_score }}
+{% if t.anomalies %}- 異常値: {{ t.anomalies | join(', ') }}{% endif %}
+{% endfor %}
+{% endif %}
+
+以下のJSON配列形式で3-5個のインサイトを出力してください。JSON以外のテキストは含めないでください。
+
+```json
+[
+  {
+    "type": "insight",
+    "category": "lp_optimization | sns_strategy | form_sales | idea_generation | general のいずれか",
+    "content": "具体的なインサイト（100-200文字。数値を含め、なぜそう判断したか、次に何をすべきかを明記）",
+    "priority": "high | medium | low",
+    "confidence": 0.0-1.0,
+    "context": {
+      "based_on": "分析の根拠となったデータポイント"
+    }
+  }
+]
+```
+
+注意事項:
+- 数値に基づく具体的な提案をすること（「改善が必要」のような曖昧な表現は避ける）
+- 各インサイトは独立して理解できること
+- categoryは改善すべき領域に最も適したものを選ぶこと
+- 異常値がある場合は必ず言及すること

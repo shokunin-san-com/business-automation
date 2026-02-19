@@ -1,0 +1,43 @@
+# Environment
+.env
+.env.local
+
+# Python
+*.pyc
+__pycache__/
+venv/
+.venv/
+
+# Credentials
+credentials/
+credentials.json
+token.pickle
+
+# Logs
+*.log
+data/logs/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Next.js
+lp-app/node_modules/
+lp-app/.next/
+lp-app/out/
+
+# Generated data (optional: remove if you want to track LP content)
+# data/lp_content/
+data/pipeline_status.json
+data/pending_ideas.json
+
+# Vercel
+.vercel
+lp-app/.vercel/
+
+# Claude Code
+.claude/
+
+# Service account key (if any)
+*.key.json

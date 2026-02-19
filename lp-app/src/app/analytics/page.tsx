@@ -1,0 +1,159 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import AppShell from "../../components/AppShell";
+
+interface AnalyticsEntry {
+  business_id: string;
+  date: string;
+  pageviews: number;
+  sessions: number;
+  bounce_rate: number;
+  conversions: number;
+  avg_time: number;
+}
+
+interface AnalyticsData {
+  entries: AnalyticsEntry[];
+  suggestions: { business_id: string; text: string; priority: string; date: string }[];
+  summary: {
+    totalPageviews: number;
+    totalSessions: number;
+    totalConversions: number;
+    avgBounceRate: number;
+  };
+}
+
+export default function AnalyticsPage() {
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/analytics")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <AppShell>
+      <header className="sticky top-0 z-30 hidden lg:flex h-14 items-center border-b border-white/[.06] bg-[#0a0a0f]/80 px-6 backdrop-blur-xl">
+        <h1 className="text-sm font-medium text-white/60">Analytics</h1>
+      </header>
+
+      <main className="mx-auto max-w-6xl space-y-6 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Analytics Overview</h2>
+            <p className="mt-0.5 text-xs text-white/40">GA4 data collected by the analytics pipeline</p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex h-40 items-center justify-center">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-blue-500" />
+          </div>
+        ) : !data || data.entries.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <StatCard label="Pageviews" value={data.summary.totalPageviews.toLocaleString()} color="blue" />
+              <StatCard label="Sessions" value={data.summary.totalSessions.toLocaleString()} color="violet" />
+              <StatCard label="Conversions" value={data.summary.totalConversions.toLocaleString()} color="emerald" />
+              <StatCard label="Bounce Rate" value={`${data.summary.avgBounceRate.toFixed(1)}%`} color="orange" />
+            </div>
+
+            {/* Data Table */}
+            <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5 overflow-x-auto">
+              <h3 className="mb-4 text-sm font-medium text-white/60">Daily Metrics</h3>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/[.06] text-left text-white/30">
+                    <th className="pb-2 pr-4 font-medium">Date</th>
+                    <th className="pb-2 pr-4 font-medium">Business ID</th>
+                    <th className="pb-2 pr-4 font-medium text-right">PV</th>
+                    <th className="pb-2 pr-4 font-medium text-right">Sessions</th>
+                    <th className="pb-2 pr-4 font-medium text-right">CVR</th>
+                    <th className="pb-2 font-medium text-right">Bounce</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.entries.slice(0, 30).map((e, i) => (
+                    <tr key={i} className="border-b border-white/[.03] text-white/60 hover:bg-white/[.02]">
+                      <td className="py-2 pr-4">{e.date}</td>
+                      <td className="py-2 pr-4 text-white/80 font-medium">{e.business_id}</td>
+                      <td className="py-2 pr-4 text-right">{e.pageviews}</td>
+                      <td className="py-2 pr-4 text-right">{e.sessions}</td>
+                      <td className="py-2 pr-4 text-right">{e.conversions}</td>
+                      <td className="py-2 text-right">{e.bounce_rate}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+
+            {/* Improvement Suggestions */}
+            {data.suggestions.length > 0 && (
+              <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5">
+                <h3 className="mb-4 text-sm font-medium text-white/60">AI Improvement Suggestions</h3>
+                <div className="space-y-2">
+                  {data.suggestions.map((s, i) => (
+                    <div key={i} className="flex items-start gap-3 rounded-xl bg-black/30 p-4">
+                      <span className={`mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                        s.priority === "high" ? "bg-red-500/15 text-red-400" :
+                        s.priority === "medium" ? "bg-amber-500/15 text-amber-400" :
+                        "bg-blue-500/15 text-blue-400"
+                      }`}>
+                        {s.priority}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs text-white/70">{s.text}</p>
+                        <p className="mt-1 text-[10px] text-white/30">{s.business_id} {"\u2022"} {s.date}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </main>
+    </AppShell>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-white/[.06] bg-white/[.02] py-20">
+      <svg className="h-12 w-12 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+      </svg>
+      <p className="mt-4 text-sm text-white/30">Analytics data not available yet</p>
+      <p className="mt-1 text-[11px] text-white/15">GA4 data will appear after the analytics pipeline runs</p>
+    </div>
+  );
+}
+
+function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
+  const colors: Record<string, string> = {
+    blue: "from-blue-500/10 to-blue-600/5 border-blue-500/10",
+    violet: "from-violet-500/10 to-violet-600/5 border-violet-500/10",
+    emerald: "from-emerald-500/10 to-emerald-600/5 border-emerald-500/10",
+    orange: "from-orange-500/10 to-orange-600/5 border-orange-500/10",
+  };
+  const dots: Record<string, string> = {
+    blue: "bg-blue-500", violet: "bg-violet-500", emerald: "bg-emerald-500", orange: "bg-orange-500",
+  };
+  return (
+    <div className={`rounded-2xl border bg-gradient-to-br p-4 ${colors[color]}`}>
+      <div className="flex items-center gap-1.5">
+        <span className={`h-1.5 w-1.5 rounded-full ${dots[color]}`} />
+        <span className="text-[11px] text-white/40">{label}</span>
+      </div>
+      <p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}

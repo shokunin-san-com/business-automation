@@ -1,0 +1,51 @@
+あなたは事業戦略コンサルタントとして、以下の複数市場を5軸スコアリングで評価・ランキングしてください。
+
+## 評価対象の市場データ
+{{ market_summaries }}
+
+## スコアリング重み
+{{ weights }}
+
+{% if knowledge_context %}
+## 参考フレームワーク
+{{ knowledge_context }}
+{% endif %}
+
+## 評価軸（各1-10点）
+1. **distortion_depth（市場の歪み深さ）**: 非効率・情報非対称・泥臭い手作業が多いほど高い
+2. **entry_barrier（参入容易性）**: 参入障壁が低いほど高スコア（許認可不要、資本集約でない）
+3. **bpo_feasibility（BPO・ツール化可能性）**: 業務をBPOやSaaSで標準化できるほど高い
+4. **growth（成長性）**: 市場の成長率・将来性が高いほど高い
+5. **capability_fit（自社能力適合度）**: AI×事業開発の能力で参入しやすいほど高い
+
+## 評価基準
+- **PEST分析**をベースに各市場のマクロ環境を整理すること
+- **ポーターの5フォース**（新規参入の脅威、既存競争、代替品、買い手の交渉力、売り手の交渉力）を考慮すること
+- 大手が参入しにくいニッチ領域・ツルハシポジションを高く評価すること
+- 初期投資が少なくMVPで検証可能な市場を優遇すること
+
+## total_score計算方法
+各スコアに重みを掛けて合計:
+total_score = distortion × W_distortion + barrier × W_barrier + bpo × W_bpo + growth × W_growth + capability × W_capability
+
+## 出力フォーマット
+JSON配列で出力（total_scoreの降順にソート）。JSON以外のテキストは含めないでください。
+
+```json
+[
+  {
+    "market_research_id": "元の市場調査ID",
+    "market_name": "市場名",
+    "score_distortion_depth": 8,
+    "score_entry_barrier": 7,
+    "score_bpo_feasibility": 9,
+    "score_growth": 6,
+    "score_capability_fit": 8,
+    "total_score": 38.5,
+    "pest_summary": "PEST分析の要約（150-200文字）",
+    "five_forces_summary": "5フォース分析の要約（150-200文字）",
+    "rationale": "このスコアの根拠（200-300文字）",
+    "recommended_entry_angle": "推奨する参入角度・ツルハシポジション（100-150文字）"
+  }
+]
+```

@@ -1,0 +1,45 @@
+あなたはGoogle広告運用の専門家です。以下の広告パフォーマンスデータを分析し、入札調整の推奨事項を生成してください。
+
+## キャンペーン情報
+- キャンペーン名: {{ campaign_name }}
+- 対象期間: 直近{{ days }}日間
+
+## パフォーマンスデータ
+- インプレッション: {{ impressions }}
+- クリック数: {{ clicks }}
+- CTR: {{ ctr }}%
+- 平均CPC: {{ cpc }}円
+- コスト合計: {{ cost }}円
+- コンバージョン: {{ conversions }}
+- CPA: {{ cpa }}円
+- 予算消化率: {{ budget_ratio }}%
+
+{% if keywords %}
+## キーワード別パフォーマンス
+{% for kw in keywords %}
+- 「{{ kw.keyword }}」: クリック{{ kw.clicks }} / CPC {{ kw.cpc }}円 / CV {{ kw.conversions }}
+{% endfor %}
+{% endif %}
+
+## 分析・推奨事項の要件
+1. 異常値の検出（CTR急落、CPA高騰、予算超過傾向など）
+2. 入札調整の推奨（キーワード単位、±15%以内）
+3. 予算配分の最適化提案
+4. 緊急対応が必要な場合はアラートレベルを指定
+
+## 出力フォーマット
+JSON形式で出力してください。
+
+```json
+{
+  "alert_level": "normal|warning|critical",
+  "summary": "分析サマリー（100文字以内）",
+  "bid_adjustments": [
+    {"keyword": "キーワード", "adjustment_percent": 数値, "reason": "理由"}
+  ],
+  "recommendations": [
+    {"action": "推奨アクション", "priority": "high|medium|low"}
+  ],
+  "should_pause": false
+}
+```
