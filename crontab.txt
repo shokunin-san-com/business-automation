@@ -19,8 +19,8 @@ PYTHON=$PROJECT/.venv/bin/python
 # --- 毎週月曜 4:00 — 競合調査（探索フェーズ Step 3） ---
 0 4 * * 1  cd $PROJECT && $PYTHON scripts/C_competitor_analysis.py >> data/logs/cron.log 2>&1
 
-# --- 毎週月曜 6:00 — 事業案自動生成 → Slack通知 ---
-0 6 * * 1  cd $PROJECT && $PYTHON scripts/0_idea_generator.py >> data/logs/cron.log 2>&1
+# --- 毎日 6:00 — 事業案自動生成（3件/日） → Slack通知 ---
+0 6 * * *  cd $PROJECT && $PYTHON scripts/0_idea_generator.py >> data/logs/cron.log 2>&1
 
 # --- 毎日 9:00 — activeな事業案のLP自動生成 ---
 0 9 * * *  cd $PROJECT && $PYTHON scripts/1_lp_generator.py >> data/logs/cron.log 2>&1

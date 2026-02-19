@@ -83,18 +83,18 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
 };
 
 const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers: string[] }> = {
-  A_market_research: { icon: "\u{1F50D}", schedule: "Sun 20:00", schedulers: ["schedule-market-research"] },
-  B_market_selection: { icon: "\u{1F3AF}", schedule: "Sun 22:00", schedulers: ["schedule-market-selection"] },
-  C_competitor_analysis: { icon: "\u2694\uFE0F", schedule: "Mon 4:00", schedulers: ["schedule-competitor-analysis"] },
-  "0_idea_generator": { icon: "\u{1F4A1}", schedule: "Mon 6:00", schedulers: ["schedule-idea-generator"] },
-  "1_lp_generator": { icon: "\u{1F680}", schedule: "Daily 9:00", schedulers: ["schedule-lp-generator"] },
-  "2_sns_poster": { icon: "\u{1F4E2}", schedule: "Daily 10:00 / 18:00", schedulers: ["schedule-sns-morning", "schedule-sns-evening"] },
-  "3_form_sales": { icon: "\u2709\uFE0F", schedule: "Weekdays 11:00", schedulers: ["schedule-form-sales"] },
-  "4_analytics_reporter": { icon: "\u{1F4C8}", schedule: "Daily 1:00", schedulers: ["schedule-analytics"] },
-  "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "Mon 8:00", schedulers: ["schedule-slack-report"] },
-  "6_ads_monitor": { icon: "\u{1F4B0}", schedule: "Hourly 24/365", schedulers: ["schedule-ads-monitor"] },
-  "7_learning_engine": { icon: "\u{1F9E0}", schedule: "Daily 2:00", schedulers: ["schedule-learning-engine"] },
-  "8_ads_creator": { icon: "\u{1F4E3}", schedule: "Weekly Mon 7:00", schedulers: ["schedule-ads-creator"] },
+  A_market_research: { icon: "\u{1F50D}", schedule: "毎週日曜 20:00", schedulers: ["schedule-market-research"] },
+  B_market_selection: { icon: "\u{1F3AF}", schedule: "毎週日曜 22:00", schedulers: ["schedule-market-selection"] },
+  C_competitor_analysis: { icon: "\u2694\uFE0F", schedule: "毎週月曜 04:00", schedulers: ["schedule-competitor-analysis"] },
+  "0_idea_generator": { icon: "\u{1F4A1}", schedule: "毎日 06:00", schedulers: ["schedule-idea-generator"] },
+  "1_lp_generator": { icon: "\u{1F680}", schedule: "毎日 09:00", schedulers: ["schedule-lp-generator"] },
+  "2_sns_poster": { icon: "\u{1F4E2}", schedule: "毎日 10:00 / 18:00", schedulers: ["schedule-sns-morning", "schedule-sns-evening"] },
+  "3_form_sales": { icon: "\u2709\uFE0F", schedule: "平日 11:00", schedulers: ["schedule-form-sales"] },
+  "4_analytics_reporter": { icon: "\u{1F4C8}", schedule: "毎日 01:00", schedulers: ["schedule-analytics"] },
+  "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "毎週月曜 08:00", schedulers: ["schedule-slack-report"] },
+  "6_ads_monitor": { icon: "\u{1F4B0}", schedule: "毎時（24時間稼働）", schedulers: ["schedule-ads-monitor"] },
+  "7_learning_engine": { icon: "\u{1F9E0}", schedule: "毎日 02:00", schedulers: ["schedule-learning-engine"] },
+  "8_ads_creator": { icon: "\u{1F4E3}", schedule: "毎週月曜 07:00", schedulers: ["schedule-ads-creator"] },
 };
 
 const SCHEDULE_PRESETS = [
@@ -145,11 +145,11 @@ function relativeTime(iso: string): string {
   if (!iso) return "";
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return "たった今";
+  if (mins < 60) return `${mins}分前`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  if (hrs < 24) return `${hrs}時間前`;
+  return `${Math.floor(hrs / 24)}日前`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -499,7 +499,7 @@ export default function DashboardPage() {
         await fetchKnowledge();
       } else {
         console.error("Upload failed:", result);
-        alert(result.error || "Upload failed");
+        alert(result.error || "アップロードに失敗しました");
       }
     } catch (err) {
       console.error("Upload error:", err);
@@ -622,13 +622,13 @@ export default function DashboardPage() {
           {runningCount > 0 && (
             <div className="flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] text-blue-400 border border-blue-500/20">
               <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
-              {runningCount} running
+              {runningCount}件 実行中
             </div>
           )}
           {errorCount > 0 && (
             <div className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-[11px] text-red-400 border border-red-500/20">
               <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-              {errorCount} error
+              {errorCount}件 エラー
             </div>
           )}
           <button
@@ -731,27 +731,27 @@ export default function DashboardPage() {
 
           {/* ---- KPI Cards ---- */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <KPICard label="Landing Pages" value={data.lpCount} trend={null} color="blue" />
+            <KPICard label="LP数" value={data.lpCount} trend={null} color="blue" />
             <KPICard
-              label="SNS Posts"
+              label="SNS投稿数"
               value={data.pipeline.find((s) => s.id === "2_sns_poster")?.metrics?.posted ?? "\u2014"}
               trend={null}
               color="violet"
             />
             <KPICard
-              label="Form Outreach"
+              label="フォーム営業"
               value={data.pipeline.find((s) => s.id === "3_form_sales")?.metrics?.sent ?? "\u2014"}
               trend={null}
               color="emerald"
             />
             <KPICard
-              label="Ad Adjustments"
+              label="広告調整"
               value={data.pipeline.find((s) => s.id === "6_ads_monitor")?.metrics?.bid_adjustments ?? "\u2014"}
               trend={null}
               color="orange"
             />
             <KPICard
-              label="Improvements"
+              label="改善提案"
               value={data.pipeline.find((s) => s.id === "4_analytics_reporter")?.metrics?.suggestions ?? "\u2014"}
               trend={null}
               color="pink"
@@ -761,16 +761,16 @@ export default function DashboardPage() {
           {/* ---- Tab Navigation ---- */}
           <div className="flex gap-1 rounded-xl bg-white/[.03] p-1">
             <TabButton active={activeTab === "pipeline"} onClick={() => setActiveTab("pipeline")}>
-              Pipeline
+              パイプライン
             </TabButton>
             <TabButton active={activeTab === "logs"} onClick={() => setActiveTab("logs")}>
-              Logs
+              ログ
             </TabButton>
             <TabButton active={activeTab === "knowledge"} onClick={() => setActiveTab("knowledge")}>
-              {"\u{1F4DA}"} Knowledge
+              {"\u{1F4DA}"} ナレッジ
             </TabButton>
             <TabButton active={activeTab === "feedback"} onClick={() => setActiveTab("feedback")}>
-              {"\u{1F9E0}"} Feedback
+              {"\u{1F9E0}"} フィードバック
             </TabButton>
           </div>
 
@@ -920,7 +920,23 @@ export default function DashboardPage() {
                       <div className="relative mt-3 flex flex-wrap gap-2 border-t border-white/[.06] pt-3">
                         {Object.entries(script.metrics).map(([k, v]) => (
                           <span key={k} className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
-                            {k.replace(/_/g, " ")}: <span className="text-white/70 font-medium">{v}</span>
+                            {({
+                              segments_researched: "調査セグメント",
+                              markets_scored: "スコアリング市場",
+                              competitors_analyzed: "競合分析",
+                              markets_processed: "処理市場",
+                              ideas_generated: "生成アイデア",
+                              lps_generated: "生成LP",
+                              posted: "投稿",
+                              reviewed: "レビュー済",
+                              blocked: "ブロック",
+                              sent: "送信",
+                              suggestions: "提案",
+                              total_pageviews: "総PV",
+                              lps_analyzed: "分析LP",
+                              bid_adjustments: "入札調整",
+                              kill_flagged: "損切り対象",
+                            } as Record<string, string>)[k] || k.replace(/_/g, " ")}: <span className="text-white/70 font-medium">{v}</span>
                           </span>
                         ))}
                       </div>
@@ -982,12 +998,12 @@ export default function DashboardPage() {
           {activeTab === "logs" && (
             <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-medium text-white/60">Recent Logs</h2>
-                <span className="text-[10px] text-white/20">{data.logs.length} entries</span>
+                <h2 className="text-sm font-medium text-white/60">実行ログ</h2>
+                <span className="text-[10px] text-white/20">{data.logs.length}件</span>
               </div>
               <div className="max-h-[500px] overflow-y-auto rounded-xl bg-black/50 p-4 font-mono text-[11px] leading-5">
                 {data.logs.length === 0 ? (
-                  <p className="text-white/20">No logs yet</p>
+                  <p className="text-white/20">ログはまだありません</p>
                 ) : (
                   data.logs.map((line, i) => (
                     <div
@@ -1519,7 +1535,7 @@ function KPICard({
       <p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p>
       {trend !== null && (
         <p className={`mt-1 text-[10px] ${trend >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-          {trend >= 0 ? "\u2191" : "\u2193"} {Math.abs(trend)}% vs last week
+          {trend >= 0 ? "\u2191" : "\u2193"} {Math.abs(trend)}% 先週比
         </p>
       )}
     </div>
