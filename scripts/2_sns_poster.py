@@ -88,10 +88,19 @@ def _try_post(
         logger.info(f"Risk score {risk.score} → AUTO posting to {platform}")
         if platform == "twitter":
             result = post_tweet(text)
-            url = result["url"] if result else ""
         else:
             result = post_linkedin(text)
-            url = result.get("id", "") if result else ""
+
+        if result is None:
+            logger.error(f"Failed to post to {platform} for {idea['name']}")
+            slack_notify(
+                f":x: *{platform}投稿に失敗* しました\n"
+                f"事業案: {idea['name']}\n"
+                f"APIエラーが発生しました。認証情報を確認してください。"
+            )
+            return "error", ""
+
+        url = result.get("url", "") or result.get("id", "")
         return "posted", url
 
     elif risk.decision == "review":
@@ -134,6 +143,7 @@ def main():
         total_posted = 0
         total_reviewed = 0
         total_blocked = 0
+        total_errors = 0
 
         for idea in active_ideas:
             bid = idea["id"]
@@ -158,6 +168,8 @@ def main():
                     total_reviewed += 1
                 elif status == "blocked":
                     total_blocked += 1
+                elif status == "error":
+                    total_errors += 1
 
         summary_parts = []
         if total_posted:
@@ -166,16 +178,20 @@ def main():
             summary_parts.append(f"要確認 {total_reviewed}件")
         if total_blocked:
             summary_parts.append(f"ブロック {total_blocked}件")
+        if total_errors:
+            summary_parts.append(f"エラー {total_errors}件")
 
-        if total_posted:
+        if total_posted or total_errors:
             slack_notify(f":mega: SNS投稿: {' / '.join(summary_parts)}")
 
-        update_status("2_sns_poster", "success", " / ".join(summary_parts) or "対象なし", {
+        final_status = "success" if total_errors == 0 else "error"
+        update_status("2_sns_poster", final_status, " / ".join(summary_parts) or "対象なし", {
             "posted": total_posted,
             "reviewed": total_reviewed,
             "blocked": total_blocked,
+            "errors": total_errors,
         })
-        logger.info(f"=== SNS poster complete: posted={total_posted}, review={total_reviewed}, blocked={total_blocked} ===")
+        logger.info(f"=== SNS poster complete: posted={total_posted}, review={total_reviewed}, blocked={total_blocked}, errors={total_errors} ===")
     except Exception as e:
         update_status("2_sns_poster", "error", str(e))
         logger.error(f"SNS poster failed: {e}")
