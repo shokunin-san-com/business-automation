@@ -53,6 +53,10 @@ export function isQuery(text: string): boolean {
 export async function handleDataQuery(message: string): Promise<string> {
   const lower = message.toLowerCase();
 
+  // System explanation — "何これ", "わかるように教えて", "使い方", "ヘルプ" etc.
+  if (/なんの(チャット|アプリ|ボット|システム)|何これ|使い方|ヘルプ|help|わかるように|説明して|どういう/.test(lower)) {
+    return getSystemExplanation();
+  }
   if (/戦略|提案|方針|今後|改善|課題/.test(lower)) {
     return await getStrategySummary();
   }
@@ -69,6 +73,25 @@ export async function handleDataQuery(message: string): Promise<string> {
     return await getIdeasSummary();
   }
   return await getOverview();
+}
+
+function getSystemExplanation(): string {
+  return (
+    `🤖 *BVA System（事業検証自動化ボット）とは？*\n\n` +
+    `かんたんに言うと「新しいビジネスのアイデアを考えて、テストして、結果を教えてくれるロボット」です！\n\n` +
+    `*🔄 やっていること:*\n` +
+    `1️⃣ *アイデアを考える* — AIが市場を調べて「こんなビジネスどう？」と提案\n` +
+    `2️⃣ *ホームページを作る* — 提案されたビジネスのWebページ（LP）を自動生成\n` +
+    `3️⃣ *SNSで宣伝する* — X（Twitter）に自動で投稿して人を集める\n` +
+    `4️⃣ *結果を分析する* — 何人見た？反応は？を自動レポート\n` +
+    `5️⃣ *改善し続ける* — データを元に、もっと良くする方法を学習\n\n` +
+    `*💬 話しかけ方:*\n` +
+    `• 「パイプライン状況教えて」→ 各システムの動作状況\n` +
+    `• 「LP成果どう？」→ ページのアクセス数やコンバージョン\n` +
+    `• 「今後の戦略を提案して」→ データに基づく改善提案\n` +
+    `• 「SNS投稿の頻度を上げて」→ 指示として保存、次回から反映\n\n` +
+    `📊 ダッシュボード: https://lp-app-pi.vercel.app/dashboard`
+  );
 }
 
 async function getLPPerformanceSummary(): Promise<string> {

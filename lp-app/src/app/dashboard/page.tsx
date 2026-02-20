@@ -97,6 +97,12 @@ const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers
   "8_ads_creator": { icon: "\u{1F4E3}", schedule: "毎週月曜 07:00", schedulers: ["schedule-ads-creator"] },
 };
 
+/** Human-readable suffix for individual Cloud Scheduler job names */
+const SCHEDULER_LABEL: Record<string, string> = {
+  "schedule-sns-morning": "朝",
+  "schedule-sns-evening": "夕",
+};
+
 const SCHEDULE_PRESETS = [
   { label: "毎日 6:00", cron: "0 6 * * *" },
   { label: "毎日 9:00", cron: "0 9 * * *" },
@@ -872,32 +878,68 @@ export default function DashboardPage() {
                         <span className="text-xl">{meta.icon}</span>
                         <div>
                           <p className="text-sm font-medium">{script.label}</p>
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-[10px] text-white/30">
-                              {(() => {
-                                const firstScheduler = scriptSchedulers[0];
-                                const realCron = firstScheduler ? schedulerStatus[firstScheduler]?.schedule : "";
-                                return realCron ? cronToJapanese(realCron) : meta.schedule;
-                              })()}
-                            </p>
-                            {scriptSchedulers.length === 1 && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const name = scriptSchedulers[0];
-                                  const currentCron = schedulerStatus[name]?.schedule || "";
-                                  setScheduleEditTarget({
-                                    schedulerName: name,
-                                    scriptLabel: script.label,
-                                    currentCron,
-                                  });
-                                  setScheduleEditCron(currentCron);
-                                }}
-                                className="text-[9px] text-white/20 hover:text-blue-400 transition-colors"
-                                title="スケジュール編集"
-                              >
-                                {"\u270F\uFE0F"}
-                              </button>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {scriptSchedulers.length <= 1 ? (
+                              /* Single scheduler — show one line */
+                              <>
+                                <p className="text-[10px] text-white/30">
+                                  {(() => {
+                                    const firstScheduler = scriptSchedulers[0];
+                                    const realCron = firstScheduler ? schedulerStatus[firstScheduler]?.schedule : "";
+                                    return realCron ? cronToJapanese(realCron) : meta.schedule;
+                                  })()}
+                                </p>
+                                {scriptSchedulers.length === 1 && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const name = scriptSchedulers[0];
+                                      const currentCron = schedulerStatus[name]?.schedule || "";
+                                      setScheduleEditTarget({
+                                        schedulerName: name,
+                                        scriptLabel: script.label,
+                                        currentCron,
+                                      });
+                                      setScheduleEditCron(currentCron);
+                                    }}
+                                    className="text-[9px] text-white/20 hover:text-blue-400 transition-colors"
+                                    title="スケジュール編集"
+                                  >
+                                    {"\u270F\uFE0F"}
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              /* Multiple schedulers — show each with its own edit button */
+                              <div className="flex flex-col gap-0.5">
+                                {scriptSchedulers.map((name) => {
+                                  const realCron = schedulerStatus[name]?.schedule || "";
+                                  const suffix = SCHEDULER_LABEL[name] || name.replace(/^schedule-/, "");
+                                  return (
+                                    <div key={name} className="flex items-center gap-1">
+                                      <p className="text-[10px] text-white/30">
+                                        {suffix}: {realCron ? cronToJapanese(realCron) : "—"}
+                                      </p>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const currentCron = schedulerStatus[name]?.schedule || "";
+                                          setScheduleEditTarget({
+                                            schedulerName: name,
+                                            scriptLabel: `${script.label}（${suffix}）`,
+                                            currentCron,
+                                          });
+                                          setScheduleEditCron(currentCron);
+                                        }}
+                                        className="text-[9px] text-white/20 hover:text-blue-400 transition-colors"
+                                        title={`${suffix}スケジュール編集`}
+                                      >
+                                        {"\u270F\uFE0F"}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             )}
                           </div>
                         </div>
