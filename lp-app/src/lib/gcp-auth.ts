@@ -13,30 +13,37 @@ const GCP_REGION = process.env.GCP_REGION || "asia-northeast1";
 export { GCP_PROJECT, GCP_REGION };
 
 let _authClient: InstanceType<typeof google.auth.GoogleAuth> | null = null;
+let _chatAuthClient: InstanceType<typeof google.auth.GoogleAuth> | null = null;
+
+function getCredentials() {
+  const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (saJson) return { credentials: JSON.parse(saJson) };
+
+  const localPath = path.join(process.cwd(), "..", "credentials", "service_account.json");
+  if (fs.existsSync(localPath)) return { keyFile: localPath };
+
+  throw new Error("No Google credentials found");
+}
 
 function getAuth() {
   if (_authClient) return _authClient;
-
-  const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (saJson) {
-    const parsed = JSON.parse(saJson);
-    _authClient = new google.auth.GoogleAuth({
-      credentials: parsed,
-      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-    });
-  } else {
-    const localPath = path.join(process.cwd(), "..", "credentials", "service_account.json");
-    if (fs.existsSync(localPath)) {
-      _authClient = new google.auth.GoogleAuth({
-        keyFile: localPath,
-        scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-      });
-    } else {
-      throw new Error("No Google credentials found");
-    }
-  }
-
+  _authClient = new google.auth.GoogleAuth({
+    ...getCredentials(),
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+  });
   return _authClient;
+}
+
+function getChatAuth() {
+  if (_chatAuthClient) return _chatAuthClient;
+  _chatAuthClient = new google.auth.GoogleAuth({
+    ...getCredentials(),
+    scopes: [
+      "https://www.googleapis.com/auth/chat.bot",
+      "https://www.googleapis.com/auth/chat.messages.create",
+    ],
+  });
+  return _chatAuthClient;
 }
 
 /**
@@ -47,6 +54,17 @@ export async function getAccessToken(): Promise<string> {
   const client = await auth.getClient();
   const tokenRes = await client.getAccessToken();
   if (!tokenRes.token) throw new Error("Failed to get access token");
+  return tokenRes.token;
+}
+
+/**
+ * Get a valid OAuth2 access token for Google Chat API calls.
+ */
+export async function getChatAccessToken(): Promise<string> {
+  const auth = getChatAuth();
+  const client = await auth.getClient();
+  const tokenRes = await client.getAccessToken();
+  if (!tokenRes.token) throw new Error("Failed to get Chat access token");
   return tokenRes.token;
 }
 
