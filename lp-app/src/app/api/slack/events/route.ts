@@ -75,8 +75,12 @@ function isQuery(text: string): boolean {
   // Explicit question patterns
   if (/教えて|知りたい|どう|どの|いくつ|何件|確認|状況|成果|レポート|報告|見せて|まとめ/.test(lower)) return true;
   if (/\?|？/.test(lower)) return true;
+  // Request patterns (提案して、分析して、出して、etc.)
+  if (/提案して|提案|分析して|出して|表示して|一覧|リスト|サマリー|概要|戦略|方針/.test(lower)) return true;
   // Pipeline/status query
   if (/パイプライン|ステータス|最新|直近|今日|今週|結果/.test(lower)) return true;
+  // Data-related queries (these should always trigger data lookup)
+  if (/今後|改善|課題|傾向|推移|比較/.test(lower)) return true;
   return false;
 }
 
@@ -108,6 +112,11 @@ async function postSlackReply(
 
 async function handleDataQuery(message: string): Promise<string> {
   const lower = message.toLowerCase();
+
+  // Strategy / proposal / future planning — provide comprehensive overview
+  if (/戦略|提案|方針|今後|改善|課題/.test(lower)) {
+    return await getStrategySummary();
+  }
 
   // LP / Analytics query
   if (/lp|成果|pv|ページビュー|コンバージョン|cvr|分析|アクセス/.test(lower)) {
@@ -302,6 +311,92 @@ async function getOverview(): Promise<string> {
   } catch (err) {
     console.error("Overview query error:", err);
     return "⚠️ データの取得中にエラーが発生しました。ダッシュボードをご確認ください。";
+  }
+}
+
+async function getStrategySummary(): Promise<string> {
+  try {
+    const [ideas, status, analytics, snsPosts] = await Promise.all([
+      getAllRows("business_ideas").catch(() => []),
+      getAllRows("pipeline_status").catch(() => []),
+      getAllRows("analytics").catch(() => []),
+      getAllRows("sns_posts").catch(() => []),
+    ]);
+
+    const activeIdeas = ideas.filter((i) => i.status === "active");
+    const pendingIdeas = ideas.filter((i) => i.status === "pending_approval");
+    const errors = status.filter((s) => s.status === "error");
+
+    // Aggregate analytics
+    const latestByBiz: Record<string, typeof analytics[0]> = {};
+    for (const entry of analytics) {
+      const bid = entry.business_id || "";
+      if (!latestByBiz[bid] || (entry.date || "") > (latestByBiz[bid].date || "")) {
+        latestByBiz[bid] = entry;
+      }
+    }
+    const totalPV = Object.values(latestByBiz).reduce((s, e) => s + (Number(e.pageviews) || 0), 0);
+    const totalCV = Object.values(latestByBiz).reduce((s, e) => s + (Number(e.conversions) || 0), 0);
+    const avgBounce = Object.values(latestByBiz).length > 0
+      ? Object.values(latestByBiz).reduce((s, e) => s + (Number(e.bounce_rate) || 0), 0) / Object.values(latestByBiz).length
+      : 0;
+
+    // SNS stats
+    const recentSNS = snsPosts.filter((p) => {
+      const d = p.posted_at || p.created_at || "";
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      return d >= weekAgo;
+    });
+
+    let text = `🎯 *MarketProbe 戦略サマリー*\n\n`;
+
+    // Current status
+    text += `*📊 現状:*\n`;
+    text += `• アクティブ事業: *${activeIdeas.length}*件`;
+    if (pendingIdeas.length > 0) text += ` / 承認待ち: *${pendingIdeas.length}*件`;
+    text += `\n`;
+    text += `• 累計PV: *${totalPV}* / CV: *${totalCV}*`;
+    if (avgBounce > 0) text += ` / 平均直帰率: *${avgBounce.toFixed(1)}%*`;
+    text += `\n`;
+    text += `• 直近7日のSNS投稿: *${recentSNS.length}*件\n`;
+    if (errors.length > 0) {
+      text += `• ⚠️ パイプラインエラー: *${errors.length}*件\n`;
+    }
+
+    // Suggestions based on data
+    text += `\n*💡 データに基づく提案:*\n`;
+
+    if (totalPV === 0 && totalCV === 0) {
+      text += `• LP未稼働: まずLP生成パイプラインを実行し、アクセスデータを蓄積しましょう\n`;
+    } else if (totalCV === 0 && totalPV > 0) {
+      text += `• PVはあるがCV未発生: CTAの改善やフォーム最適化を検討してください\n`;
+    } else if (avgBounce > 70) {
+      text += `• 直帰率が高い（${avgBounce.toFixed(0)}%）: ヘッドラインの訴求力やページ読み込み速度を見直しましょう\n`;
+    }
+
+    if (recentSNS.length < 3) {
+      text += `• SNS投稿頻度が低い: 投稿頻度を上げてリーチ拡大を図りましょう\n`;
+    }
+
+    if (pendingIdeas.length > 0) {
+      text += `• 承認待ちの事業案が *${pendingIdeas.length}*件: ダッシュボードで確認・承認してください\n`;
+    }
+
+    if (errors.length > 0) {
+      const errorScripts = errors.map((e) => e.script_id || "不明").join(", ");
+      text += `• エラー発生中: ${errorScripts} — ダッシュボードで詳細を確認してください\n`;
+    }
+
+    if (activeIdeas.length > 0 && totalPV > 0 && totalCV > 0 && avgBounce < 50 && errors.length === 0) {
+      text += `• ✅ 全体的に順調です。スケール戦略（新規事業案追加、広告出稿拡大）を検討しましょう\n`;
+    }
+
+    text += `\n詳細は「LP成果教えて」「パイプライン状況」「SNS投稿状況」で確認できます。`;
+
+    return text;
+  } catch (err) {
+    console.error("Strategy summary error:", err);
+    return "⚠️ 戦略サマリーの生成中にエラーが発生しました。ダッシュボードをご確認ください。";
   }
 }
 
