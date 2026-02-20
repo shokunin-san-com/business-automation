@@ -36,10 +36,11 @@ async function postChatMessage(
 ): Promise<boolean> {
   try {
     const accessToken = token || (await getChatAccessToken());
-    const url = `${CHAT_API}/${spaceName}/messages`;
+    let url = `${CHAT_API}/${spaceName}/messages`;
     const body: Record<string, unknown> = { text };
     if (threadName) {
       body.thread = { name: threadName };
+      url += "?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD";
     }
     const res = await fetch(url, {
       method: "POST",
@@ -106,6 +107,7 @@ interface ChatAppEvent {
     argumentText?: string;
     sender?: { displayName?: string; name?: string; type?: string };
     thread?: { name?: string };
+    space?: { name?: string; displayName?: string };
   };
   user?: { displayName?: string; name?: string; type?: string };
   [key: string]: unknown;
@@ -299,47 +301,26 @@ async function handleWorkspaceEvent(
     return NextResponse.json({ ok: true });
   }
 
-  // Get Chat API token
-  let token: string;
-  try {
-    token = await getChatAccessToken();
-  } catch (err) {
-    console.error("[pubsub/workspace] Failed to get Chat access token:", err);
-    return NextResponse.json({ ok: true });
-  }
-
-  // Extract message resource name from CloudEvent data or attributes
-  // With includeResource=false, the data may contain just { message: { name } }
-  // or the resource name might be in ce-source / ce-subject attributes
-  const messageName =
-    eventData.message?.name ||
-    (eventData as Record<string, unknown>)["resourceName"] as string ||
-    pubsubMessage?.attributes?.["ce-subject"] || // e.g. "spaces/X/messages/Y"
-    "";
-
-  if (!messageName || !messageName.includes("messages/")) {
-    console.warn("[pubsub/workspace] No message name in event data or attributes");
+  // With includeResource=true, the full message is embedded in eventData.message
+  // With includeResource=false, we'd need to fetch it via Chat API (but service
+  // account can't read user messages in external spaces, so we use includeResource=true)
+  const msg = eventData.message;
+  if (!msg?.name) {
+    console.warn("[pubsub/workspace] No message in event data");
     console.warn("[pubsub/workspace] Event data:", JSON.stringify(eventData).substring(0, 500));
-    console.warn("[pubsub/workspace] Attributes:", JSON.stringify(pubsubMessage?.attributes || {}));
-    return NextResponse.json({ ok: true });
-  }
-
-  const fullMessage = await fetchChatMessage(messageName, token);
-  if (!fullMessage) {
-    console.warn("[pubsub/workspace] Could not fetch message, skipping");
     return NextResponse.json({ ok: true });
   }
 
   const messageText =
-    fullMessage.argumentText?.trim() || fullMessage.text?.trim() || "";
-  const senderType = fullMessage.sender?.type || "";
+    msg.argumentText?.trim() || msg.text?.trim() || "";
+  const senderType = msg.sender?.type || "";
   const senderName =
-    fullMessage.sender?.displayName ||
-    fullMessage.sender?.name ||
+    msg.sender?.displayName ||
+    msg.sender?.name ||
     "unknown";
   const spaceName =
-    fullMessage.space?.name || eventData.space?.name || "";
-  const threadName = fullMessage.thread?.name || "";
+    msg.space?.name || eventData.space?.name || "";
+  const threadName = msg.thread?.name || "";
 
   // Skip bot messages
   if (senderType === "BOT") {
@@ -365,9 +346,9 @@ async function handleWorkspaceEvent(
     reply = await saveDirective(messageText, "gchat", senderName, spaceName);
   }
 
-  // Post the reply
+  // Post the reply via Chat API (service account can post to external spaces)
   if (spaceName) {
-    await postChatMessage(spaceName, reply, threadName, token);
+    await postChatMessage(spaceName, reply, threadName);
   }
 
   return NextResponse.json({ ok: true });

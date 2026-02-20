@@ -73,7 +73,7 @@ def create_subscription(creds):
             "pubsubTopic": PUBSUB_TOPIC,
         },
         "payloadOptions": {
-            "includeResource": False,
+            "includeResource": True,
         },
     }
 
@@ -100,9 +100,21 @@ def list_subscriptions(creds):
     return resp
 
 
+def delete_subscription(creds, sub_name):
+    """Delete a subscription by name."""
+    url = f"https://workspaceevents.googleapis.com/v1/{sub_name}"
+    resp = requests.delete(
+        url,
+        headers={"Authorization": f"Bearer {creds.token}"},
+    )
+    return resp
+
+
 if __name__ == "__main__":
+    import sys
+
     print("=" * 60)
-    print("Workspace Events API Subscription Creator")
+    print("Workspace Events API Subscription Manager")
     print("=" * 60)
     print(f"Space: {SPACE_NAME}")
     print(f"Topic: {PUBSUB_TOPIC}")
@@ -113,7 +125,28 @@ if __name__ == "__main__":
     print(f"  Authenticated successfully")
     print()
 
-    print("2. Creating subscription...")
+    # Check for --recreate flag
+    recreate = "--recreate" in sys.argv
+
+    if recreate:
+        print("2. Listing existing subscriptions...")
+        resp_list = list_subscriptions(creds)
+        if resp_list.status_code == 200:
+            subs = resp_list.json().get("subscriptions", [])
+            for sub in subs:
+                sub_name = sub.get("name", "")
+                print(f"  Deleting: {sub_name}")
+                del_resp = delete_subscription(creds, sub_name)
+                print(f"  Delete status: {del_resp.status_code}")
+                if del_resp.status_code not in (200, 202):
+                    print(f"  Response: {del_resp.text[:200]}")
+            if not subs:
+                print("  No existing subscriptions found.")
+        print()
+        print("3. Creating new subscription (includeResource=True)...")
+    else:
+        print("2. Creating subscription...")
+
     resp = create_subscription(creds)
     print(f"  Status: {resp.status_code}")
     try:
@@ -126,7 +159,10 @@ if __name__ == "__main__":
     if resp.status_code in (200, 201):
         print("SUCCESS! Subscription created.")
     elif resp.status_code == 409:
-        print("Subscription already exists. Listing existing subscriptions...")
+        print("Subscription already exists.")
+        print("Use --recreate flag to delete and recreate.")
+        print()
+        print("Listing existing subscriptions...")
         resp2 = list_subscriptions(creds)
         print(f"  Status: {resp2.status_code}")
         try:
