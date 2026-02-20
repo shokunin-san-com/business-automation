@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
   // Mode 2: Workspace Events API — CloudEvents format
   // =========================================================================
   if (isWorkspaceEventsMode) {
-    return handleWorkspaceEvent(eventData, ceType);
+    return handleWorkspaceEvent(eventData, ceType, pubsubMessage);
   }
 
   // Unknown format
@@ -282,6 +282,7 @@ async function handleChatAppEvent(event: ChatAppEvent) {
 async function handleWorkspaceEvent(
   eventData: ChatAppEvent,
   ceType: string,
+  pubsubMessage: { data: string; attributes?: Record<string, string> },
 ) {
   // Only handle message creation events
   if (
@@ -307,10 +308,19 @@ async function handleWorkspaceEvent(
     return NextResponse.json({ ok: true });
   }
 
-  // Fetch the full message from Chat API
-  const messageName = eventData.message?.name;
-  if (!messageName) {
-    console.warn("[pubsub/workspace] No message name in event");
+  // Extract message resource name from CloudEvent data or attributes
+  // With includeResource=false, the data may contain just { message: { name } }
+  // or the resource name might be in ce-source / ce-subject attributes
+  const messageName =
+    eventData.message?.name ||
+    (eventData as Record<string, unknown>)["resourceName"] as string ||
+    pubsubMessage?.attributes?.["ce-subject"] || // e.g. "spaces/X/messages/Y"
+    "";
+
+  if (!messageName || !messageName.includes("messages/")) {
+    console.warn("[pubsub/workspace] No message name in event data or attributes");
+    console.warn("[pubsub/workspace] Event data:", JSON.stringify(eventData).substring(0, 500));
+    console.warn("[pubsub/workspace] Attributes:", JSON.stringify(pubsubMessage?.attributes || {}));
     return NextResponse.json({ ok: true });
   }
 
