@@ -1,26 +1,50 @@
 """
-Slack notification via webhook — supports plain text and Block Kit (interactive buttons).
+Notification dispatcher — sends to Slack and Google Chat in parallel.
+
+Supports plain text and Slack Block Kit (interactive buttons).
+Google Chat receives plain-text version with Slack mrkdwn converted.
 """
 from __future__ import annotations
 
 import json
+import re
 import requests
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import SLACK_WEBHOOK_URL, get_logger
+from config import SLACK_WEBHOOK_URL, GCHAT_WEBHOOK_URL, get_logger
 
 logger = get_logger(__name__)
 
 
-def send_message(text: str, blocks: list | None = None) -> bool:
-    """Post a message to Slack via webhook.
+def _slack_mrkdwn_to_gchat(text: str) -> str:
+    """Convert Slack mrkdwn to Google Chat compatible format.
 
-    Returns True on success.
+    Google Chat supports a subset of markdown:
+      - *bold* stays as *bold*
+      - ~strike~ → ~strike~ (same)
+      - `code` stays as `code`
+      - :emoji: → strip colons for readability
     """
+    # Convert Slack emoji shortcodes to unicode or plain text
+    emoji_map = {
+        ":mega:": "📢", ":warning:": "⚠️", ":no_entry:": "🛑",
+        ":x:": "❌", ":white_check_mark:": "✅", ":rocket:": "🚀",
+        ":chart_with_upwards_trend:": "📈", ":bulb:": "💡",
+        ":gear:": "⚙️", ":memo:": "📝",
+    }
+    for code, emoji in emoji_map.items():
+        text = text.replace(code, emoji)
+    # Strip remaining :emoji_name: patterns
+    text = re.sub(r":([a-z0-9_+-]+):", r"\1", text)
+    return text
+
+
+def _send_to_slack(text: str, blocks: list | None = None) -> bool:
+    """Post a message to Slack via webhook."""
     if not SLACK_WEBHOOK_URL:
-        logger.warning("SLACK_WEBHOOK_URL not set, skipping notification")
+        logger.debug("SLACK_WEBHOOK_URL not set, skipping Slack")
         return False
 
     payload: dict = {"text": text}
@@ -45,13 +69,52 @@ def send_message(text: str, blocks: list | None = None) -> bool:
         return False
 
 
-def send_idea_approval_request(idea: dict, dashboard_url: str) -> bool:
-    """Send a Slack message with Approve/Reject buttons for a business idea.
+def _send_to_gchat(text: str) -> bool:
+    """Post a message to Google Chat via webhook."""
+    if not GCHAT_WEBHOOK_URL:
+        logger.debug("GCHAT_WEBHOOK_URL not set, skipping Google Chat")
+        return False
 
-    Note: Interactive buttons require a Slack App with Interactivity enabled.
-    If using a simple Incoming Webhook (not a Slack App), buttons won't work —
-    the message will still display but buttons will be non-functional.
-    In that case, users can approve via the Dashboard UI directly.
+    gchat_text = _slack_mrkdwn_to_gchat(text)
+    payload = {"text": gchat_text}
+
+    try:
+        resp = requests.post(
+            GCHAT_WEBHOOK_URL,
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json; charset=UTF-8"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            logger.info("Google Chat notification sent")
+            return True
+        else:
+            logger.error(f"Google Chat webhook returned {resp.status_code}: {resp.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Google Chat notification failed: {e}")
+        return False
+
+
+def send_message(text: str, blocks: list | None = None) -> bool:
+    """Post a message to Slack and Google Chat (parallel dispatch).
+
+    Returns True if at least one channel succeeded.
+    """
+    slack_ok = _send_to_slack(text, blocks)
+    gchat_ok = _send_to_gchat(text)
+
+    if not slack_ok and not gchat_ok:
+        logger.warning("Both Slack and Google Chat notifications failed")
+        return False
+    return True
+
+
+def send_idea_approval_request(idea: dict, dashboard_url: str) -> bool:
+    """Send a notification with Approve/Reject info for a business idea.
+
+    Slack: Block Kit with interactive buttons.
+    Google Chat: Plain text with dashboard link.
 
     Args:
         idea: dict with id, name, category, description, target_audience
@@ -65,6 +128,7 @@ def send_idea_approval_request(idea: dict, dashboard_url: str) -> bool:
     description = idea.get("description", "")
     target = idea.get("target_audience", "")
 
+    # Slack Block Kit
     blocks = [
         {
             "type": "header",
@@ -124,7 +188,16 @@ def send_idea_approval_request(idea: dict, dashboard_url: str) -> bool:
         },
     ]
 
-    return send_message(
-        text=f"新しい事業案: {idea_name} — 承認してください",
-        blocks=blocks,
+    # Plain text for fallback (Slack) and Google Chat
+    plain_text = (
+        f"💡 *新しい事業案: {idea_name}*\n\n"
+        f"*カテゴリ:* {category}\n"
+        f"*ターゲット:* {target}\n"
+        f"*概要:* {description[:200]}{'...' if len(description) > 200 else ''}\n\n"
+        f"ダッシュボードで承認・却下してください: {dashboard_url}"
     )
+
+    slack_ok = _send_to_slack(plain_text, blocks)
+    gchat_ok = _send_to_gchat(plain_text)
+
+    return slack_ok or gchat_ok

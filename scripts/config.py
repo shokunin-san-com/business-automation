@@ -71,6 +71,9 @@ LINKEDIN_ACCESS_TOKEN = os.getenv("LINKEDIN_ACCESS_TOKEN", "")
 # --- Slack ---
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 
+# --- Google Chat ---
+GCHAT_WEBHOOK_URL = os.getenv("GCHAT_WEBHOOK_URL", "")
+
 # --- Business ---
 YOUR_COMPANY_NAME = os.getenv("YOUR_COMPANY_NAME", "MarketProbe Project")
 YOUR_NAME = os.getenv("YOUR_NAME", "みゆ")
