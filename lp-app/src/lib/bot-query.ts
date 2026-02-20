@@ -151,10 +151,11 @@ async function getPipelineStatus(): Promise<string> {
 
     let text = `⚙️ *パイプライン状況*\n\n`;
     for (const row of status) {
-      const label = labels[row.script_id] || row.script_id;
+      const scriptKey = row.script_name || row.script_id || "";
+      const label = labels[scriptKey] || scriptKey;
       const emoji = statusEmoji[row.status] || "❓";
       const detail = row.detail || "";
-      const lastRun = row.last_run ? row.last_run.substring(0, 16) : "—";
+      const lastRun = (row.timestamp || row.last_run || "").substring(0, 16) || "—";
       text += `${emoji} ${label}: ${detail} (${lastRun})\n`;
     }
 
