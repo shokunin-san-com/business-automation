@@ -80,13 +80,9 @@ export async function POST(request: NextRequest) {
       const userId = sender?.displayName || sender?.name || "gchat_user";
       const spaceName = chatEvent.messagePayload.space?.name || "unknown";
 
-      if (isQuery(messageText)) {
-        const reply = await handleDataQuery(messageText);
-        return addonResponse(reply);
-      } else {
-        const reply = await saveDirective(messageText, "gchat", userId, spaceName);
-        return addonResponse(reply);
-      }
+      // All messages go through AI (Gemini Pro) — handles queries, directives, settings changes
+      const reply = await handleDataQuery(messageText);
+      return addonResponse(reply);
     }
 
     // --- App command (slash command) event ---
@@ -156,13 +152,9 @@ export async function POST(request: NextRequest) {
       payload.user?.displayName || payload.user?.name || "gchat_user";
     const spaceName = payload.space?.name || "unknown";
 
-    if (isQuery(messageText)) {
-      const reply = await handleDataQuery(messageText);
-      return legacyResponse(reply);
-    } else {
-      const reply = await saveDirective(messageText, "gchat", userId, spaceName);
-      return legacyResponse(reply);
-    }
+    // All messages go through AI (Gemini Pro)
+    const reply = await handleDataQuery(messageText);
+    return legacyResponse(reply);
   }
 
   // CARD_CLICKED

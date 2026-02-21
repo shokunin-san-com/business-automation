@@ -261,18 +261,18 @@ async function handleChatAppEvent(event: ChatAppEvent) {
       `[pubsub/chatapp] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
     );
 
-    // Process: execution command > query > directive
+    // Process: execution command > AI (query / directive / settings change)
     let reply: string;
     if (!messageText) {
-      reply = "何をお手伝いしましょうか？\n例: 「パイプライン状況教えて」「LP成果どう？」";
+      reply = "何をお手伝いしましょうか？\n例: 「パイプライン状況教えて」「LP成果どう？」「ターゲットに再エネ追加して」";
     } else {
       const execCmd = isExecutionCommand(messageText);
       if (execCmd) {
         reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
-      } else if (isQuery(messageText)) {
-        reply = await handleDataQuery(messageText);
       } else {
-        reply = await saveDirective(messageText, "gchat", senderName, spaceName);
+        // All non-execution messages go through AI (Gemini Pro)
+        // AI handles: queries, strategic discussions, settings changes, directives
+        reply = await handleDataQuery(messageText);
       }
     }
 
@@ -380,15 +380,14 @@ async function handleWorkspaceEvent(
     `[pubsub/workspace] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
   );
 
-  // Process: execution command > query > directive
+  // Process: execution command > AI (query / directive / settings change)
   let reply: string;
   const execCmd = isExecutionCommand(messageText);
   if (execCmd) {
     reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
-  } else if (isQuery(messageText)) {
-    reply = await handleDataQuery(messageText);
   } else {
-    reply = await saveDirective(messageText, "gchat", senderName, spaceName);
+    // All non-execution messages go through AI (Gemini Pro)
+    reply = await handleDataQuery(messageText);
   }
 
   // Post the reply via Chat API (service account can post to external spaces)
