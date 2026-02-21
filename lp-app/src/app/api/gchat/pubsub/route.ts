@@ -27,6 +27,26 @@ import { isQuery, isExecutionCommand, handleDataQuery, handleExecutionCommand, s
 
 const CHAT_API = "https://chat.googleapis.com/v1";
 
+/** Simple in-memory deduplication to prevent double-processing.
+ *  Both Chat App Pub/Sub and Workspace Events API can fire for the same message.
+ */
+const processedMessages = new Map<string, number>();
+const DEDUP_TTL_MS = 60_000; // 60 seconds
+
+function isDuplicate(messageId: string): boolean {
+  // Cleanup old entries
+  const now = Date.now();
+  for (const [key, ts] of processedMessages) {
+    if (now - ts > DEDUP_TTL_MS) processedMessages.delete(key);
+  }
+  if (processedMessages.has(messageId)) {
+    console.log(`[pubsub] Duplicate message ${messageId}, skipping`);
+    return true;
+  }
+  processedMessages.set(messageId, now);
+  return false;
+}
+
 /** Post a reply message to a Chat space via Chat API */
 async function postChatMessage(
   spaceName: string,
@@ -133,6 +153,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // Deduplicate: Pub/Sub can deliver the same message multiple times,
+  // and both Chat App mode + Workspace Events mode can fire for the same user message.
+  const pubsubMsgId = pubsubMessage.messageId || "";
+  if (pubsubMsgId && isDuplicate(`pubsub_${pubsubMsgId}`)) {
+    return NextResponse.json({ ok: true });
+  }
+
   // Decode the Pub/Sub message data (base64 → JSON)
   let eventData: ChatAppEvent;
   try {
@@ -210,6 +237,13 @@ async function handleChatAppEvent(event: ChatAppEvent) {
   // MESSAGE
   if (eventType === "MESSAGE") {
     const message = event.message;
+
+    // Deduplicate by Chat message resource name (catches both modes for same message)
+    const chatMsgName = message?.name || "";
+    if (chatMsgName && isDuplicate(`chat_${chatMsgName}`)) {
+      return NextResponse.json({ ok: true });
+    }
+
     const rawText =
       message?.argumentText?.trim() || message?.text?.trim() || "";
 
@@ -333,6 +367,11 @@ async function handleWorkspaceEvent(
   if (!msg?.name) {
     console.warn("[pubsub/workspace] No message in event data");
     console.warn("[pubsub/workspace] Event data:", JSON.stringify(eventData).substring(0, 500));
+    return NextResponse.json({ ok: true });
+  }
+
+  // Deduplicate by Chat message resource name
+  if (isDuplicate(`chat_${msg.name}`)) {
     return NextResponse.json({ ok: true });
   }
 
