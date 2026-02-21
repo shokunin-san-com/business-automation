@@ -26,6 +26,8 @@ SHEETS = {
         "created_at",
         "ceo_fit_score",
         "ceo_fit_reason",
+        "unit_economics_json",
+        "checklist_json",
     ],
     "lp_content": [
         "business_id",
@@ -230,6 +232,10 @@ DEFAULT_SETTINGS = [
     ["sender_name", "みゆ", "フォーム営業の送信者名"],
     ["sender_email", "info02@shokunin-san.com", "フォーム営業の返信先メールアドレス"],
     ["sender_company", "MarketProbe Project", "フォーム営業で使用する会社名"],
+    ["orchestrator_auto_approve", "true", "自律型パイプラインで市場を自動承認するか"],
+    ["orchestrator_auto_approve_n", "", "自動承認する上位市場数（空=selection_top_n）"],
+    ["orchestrator_min_score_threshold", "0", "自動承認の最低スコア閾値"],
+    ["pipeline_improvement_log", "", "自己反省の改善提案・リスク・次回アクション蓄積（最新5件）"],
 ]
 
 

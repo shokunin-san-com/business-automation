@@ -33,6 +33,7 @@ SCRIPT_LABELS: dict[str, str] = {
     "6_ads_monitor": "💰 広告モニタリング",
     "7_learning_engine": "🧠 学習エンジン",
     "8_ads_creator": "📣 広告自動出稿",
+    "orchestrate_abc0": "🤖 自律型パイプライン",
 }
 
 # Status → emoji + label

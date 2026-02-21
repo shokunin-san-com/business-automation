@@ -1,0 +1,80 @@
+あなたはABC0自律型パイプラインの自己反省エンジンです。
+以下のパイプライン実行結果を分析し、学びと改善提案を出力してください。
+
+## パイプライン実行サマリー
+
+- 実行日時: {{ execution_time }}
+- 総所要時間: {{ total_duration }}
+
+### 各ステップ結果
+{% for step in steps %}
+- **{{ step.name }}**: {{ step.status }}
+  {% if step.count is defined %}件数: {{ step.count }}{% endif %}
+  {% if step.errors %}エラー: {{ step.errors | join(', ') }}{% endif %}
+  {% if step.warnings %}警告: {{ step.warnings | join(', ') }}{% endif %}
+{% endfor %}
+
+{% if auto_approved_markets %}
+### 自動承認された市場
+{% for m in auto_approved_markets %}
+- {{ m.market_name }} (スコア: {{ m.total_score }})
+{% endfor %}
+{% endif %}
+
+{% if ideas_generated %}
+### 生成された事業案
+{% for idea in ideas_generated %}
+- {{ idea.name }}: {{ idea.description[:100] }}
+{% endfor %}
+{% endif %}
+
+{% if ue_summary %}
+### ユニットエコノミクス
+{{ ue_summary }}
+{% endif %}
+
+{% if checklist_summary %}
+### チェックリスト評価
+{{ checklist_summary }}
+{% endif %}
+
+{% if current_direction_notes %}
+### 現在の方向性メモ
+{{ current_direction_notes }}
+{% endif %}
+
+{% if previous_improvement_log %}
+### 前回の改善提案（フォローアップ必須）
+{{ previous_improvement_log }}
+{% endif %}
+
+## 反省ルール
+
+1. **品質評価**: 全体の出力品質を1-10でスコアリング
+2. **方向性提案**: market_direction_notesとidea_direction_notesの更新案
+3. **改善提案**: 次回実行に向けた具体的改善案（3-5件）
+4. **リスク**: 見落としているリスクや検証不足の仮説
+
+## 出力フォーマット（JSON）
+
+```json
+{
+  "summary": "パイプライン全体の1-2行サマリー",
+  "quality_score": 7,
+  "quality_rationale": "品質スコアの理由",
+  "market_direction_update": "市場方向性に追記すべき内容（なければ空文字）",
+  "idea_direction_update": "事業案方向性に追記すべき内容（なければ空文字）",
+  "improvement_suggestions": [
+    "具体的な改善案1",
+    "具体的な改善案2"
+  ],
+  "risks_identified": [
+    "リスク1"
+  ],
+  "next_actions": [
+    "次回やるべきこと1"
+  ]
+}
+```
+
+JSONのみを出力してください。

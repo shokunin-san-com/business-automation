@@ -1,0 +1,60 @@
+以下の事業案について、ユニットエコノミクスを算出してください。
+
+## 事業案（{{ num_ideas }}件）
+{{ ideas_context }}
+
+{% if market_context %}
+## 市場データ
+{{ market_context }}
+{% endif %}
+
+{% if competitor_context %}
+## 競合データ（価格ベンチマーク）
+{{ competitor_context }}
+{% endif %}
+
+{% if ceo_profile %}
+## 経営者プロフィール
+{{ ceo_profile }}
+{% endif %}
+
+## 算出ルール
+
+1. **保守的前提**: 楽観的な数値ではなく、現実的〜やや悲観的な想定で計算
+2. **根拠明示**: 各数値の前提条件（assumptions）を必ず記載
+3. **3パターン**: 可能であればベース・ベスト・ワーストを示唆
+4. **日本市場基準**: 通貨は円、市場感覚は日本のSaaS/サービス業界基準
+5. **リスク**: ユニットエコノミクスが悪化するシナリオを1つ以上記載
+
+## 出力フォーマット（JSON配列 — 事業案ごとに1オブジェクト）
+
+```json
+[
+  {
+    "idea_name": "事業案名",
+    "pricing_model": "サブスク月額 / 従量課金 / 成果報酬 等",
+    "price_per_unit": 10000,
+    "ltv": 120000,
+    "ltv_calculation": "月額1万円 × 平均12ヶ月継続",
+    "cac": 30000,
+    "cac_breakdown": "広告2万 + 営業工数1万",
+    "ltv_cac_ratio": 4.0,
+    "gross_margin_pct": 70,
+    "bep_months": 3,
+    "bep_customers": 50,
+    "initial_investment": 500000,
+    "monthly_revenue_target": 500000,
+    "churn_rate_monthly_pct": 5,
+    "payback_period_months": 3,
+    "assumptions": [
+      "月間解約率5%を想定",
+      "オーガニック獲得比率50%"
+    ],
+    "risks": [
+      "競合の価格攻勢によるCACの上昇"
+    ]
+  }
+]
+```
+
+JSON配列のみを出力してください。説明文は不要です。

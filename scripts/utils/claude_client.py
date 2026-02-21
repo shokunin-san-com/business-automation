@@ -198,6 +198,87 @@ def generate_json(
     raise RuntimeError("No AI API available — set GEMINI_API_KEY or CLAUDE_API_KEY")
 
 
+def generate_json_with_retry(
+    prompt: str,
+    system: str = "",
+    model: str | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.5,
+    max_retries: int = 3,
+    validator=None,
+) -> dict | list:
+    """Generate JSON with automatic retry and optional validation.
+
+    On failure, appends a correction hint and lowers temperature.
+    If a validator callable is provided, it must return a ValidationResult
+    with .valid (bool) and .data (corrected data, or None).
+    """
+    last_errors: list[str] = []
+
+    for attempt in range(1, max_retries + 1):
+        # Progressive temperature reduction: 0.5 → 0.4 → 0.3
+        temp = max(temperature - 0.1 * (attempt - 1), 0.2)
+
+        # On retry, append correction context
+        retry_prompt = prompt
+        if attempt > 1 and last_errors:
+            correction = (
+                f"\n\n---\n前回の出力にエラーがありました。以下を修正してください:\n"
+                + "\n".join(f"- {e}" for e in last_errors[:5])
+                + "\n正しいJSON配列で出力してください。"
+            )
+            retry_prompt = prompt + correction
+
+        logger.info(
+            f"generate_json_with_retry: attempt {attempt}/{max_retries}, "
+            f"temperature={temp}"
+        )
+
+        try:
+            result = generate_json(
+                prompt=retry_prompt,
+                system=system,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temp,
+            )
+        except Exception as e:
+            logger.warning(f"API call failed on attempt {attempt}: {e}")
+            last_errors = [str(e)]
+            if attempt == max_retries:
+                raise
+            continue
+
+        # Check for parse failure (empty list returned by _parse_json_response)
+        if result == [] and attempt < max_retries:
+            last_errors = ["JSONパースエラー: 空のリストが返却されました"]
+            continue
+
+        # Run validator if provided
+        if validator is not None:
+            vr = validator(result)
+            if not vr.valid:
+                last_errors = vr.errors
+                logger.warning(
+                    f"Validation failed (attempt {attempt}): {vr.errors}"
+                )
+                if attempt < max_retries:
+                    continue
+                # On final attempt, return what we have with warnings logged
+                logger.error(
+                    f"Validation still failing after {max_retries} attempts. "
+                    f"Returning best-effort result."
+                )
+                return vr.data if vr.data is not None else result
+            # Valid — return corrected data if available
+            return vr.data if vr.data is not None else result
+
+        return result
+
+    # Should not reach here, but just in case
+    raise ValueError(f"generate_json_with_retry failed after {max_retries} attempts")
+
+
 def _parse_json_response(raw: str) -> dict | list:
     """Strip markdown fences and parse JSON."""
     cleaned = raw.strip()

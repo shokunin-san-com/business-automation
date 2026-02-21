@@ -153,4 +153,8 @@ export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = 
     jobId: "ads-creator",
     schedulers: ["schedule-ads-creator"],
   },
+  orchestrate_abc0: {
+    jobId: "orchestrate-abc0",
+    schedulers: [],
+  },
 };

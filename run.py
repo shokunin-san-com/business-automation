@@ -23,6 +23,7 @@ SCRIPT_MAP = {
     "6_ads_monitor": "scripts.6_ads_monitor",
     "7_learning_engine": "scripts.7_learning_engine",
     "8_ads_creator": "scripts.8_ads_creator",
+    "orchestrate_abc0": "scripts.orchestrate_abc0",
 }
 
 

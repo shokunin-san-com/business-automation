@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { getAllRows, appendRows, ensureSheetExists, updateCell } from "@/lib/sheets";
 import { getAccessToken, GCP_PROJECT, GCP_REGION, JOB_MAP } from "@/lib/gcp-auth";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import Anthropic from "@anthropic-ai/sdk";
 
 const LEARNING_HEADERS = [
   "id", "type", "source", "category", "content",
@@ -83,6 +84,10 @@ const EXEC_PATTERNS: { pattern: RegExp; scriptId: string; label: string }[] = [
   { pattern: new RegExp(`広告(監視|モニター).*(${ACTION_VERBS})`), scriptId: "6_ads_monitor", label: "広告監視" },
   { pattern: new RegExp(`学習.*(${ACTION_VERBS}|回)`), scriptId: "7_learning_engine", label: "学習エンジン" },
   { pattern: new RegExp(`(${ACTION_VERBS}).*学習`), scriptId: "7_learning_engine", label: "学習エンジン" },
+  { pattern: new RegExp(`(自律|abc0|全自動|フル).*(パイプライン|実行).*(${ACTION_VERBS})`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*(自律|abc0|全自動|フル).*(パイプライン|実行)`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
+  { pattern: new RegExp(`パイプライン.*(全部|フル|一気に|まとめて|通して).*(${ACTION_VERBS})`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*(一気通貫|エンドツーエンド|e2e)`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
 ];
 
 /** Detect if the message is an execution command.
@@ -166,6 +171,7 @@ export async function handleExecutionCommand(
 const UPDATABLE_SETTINGS = new Set([
   "target_industries", "trend_keywords", "exploration_markets",
   "ideas_per_run", "idea_direction_notes", "market_direction_notes",
+  "orchestrator_auto_approve", "orchestrator_min_score_threshold",
 ]);
 
 async function applySettingsUpdate(text: string): Promise<string[]> {
@@ -206,6 +212,7 @@ async function getCurrentSettings(): Promise<string> {
       "target_industries", "trend_keywords", "exploration_markets",
       "ideas_per_run", "idea_direction_notes", "market_direction_notes",
       "exploration_segments_per_market", "selection_top_n", "competitors_per_market",
+      "pipeline_improvement_log",
     ];
     const parts: string[] = [];
     for (const key of settingsKeys) {
@@ -262,11 +269,12 @@ async function gatherDataContext(lower: string): Promise<string> {
 
   try {
     // Always include basic overview
-    const [ideas, status, analytics, snsPosts] = await Promise.all([
+    const [ideas, status, analytics, snsPosts, marketSelection] = await Promise.all([
       getAllRows("business_ideas").catch(() => []),
       getAllRows("pipeline_status").catch(() => []),
       getAllRows("analytics").catch(() => []),
       getAllRows("sns_posts").catch(() => []),
+      getAllRows("market_selection").catch(() => []),
     ]);
 
     const activeIdeas = ideas.filter((i) => i.status === "active");
@@ -322,6 +330,16 @@ async function gatherDataContext(lower: string): Promise<string> {
       }
     }
 
+    // Market selection data
+    if (/市場|選定|スコア|承認|セグメント|パイプライン|abc0|自律/.test(lower) && marketSelection.length > 0) {
+      const selected = marketSelection.filter((m) => m.status === "selected");
+      const recent = marketSelection.slice(-10);
+      parts.push(`【市場選定】合計${marketSelection.length}件、承認済み${selected.length}件`);
+      for (const m of recent) {
+        parts.push(`  ${m.status === "selected" ? "✅" : "⏳"} ${m.market_name || ""}: スコア${m.total_score || "N/A"} (${m.recommended_entry_angle || ""})`);
+      }
+    }
+
     // Learning memory
     if (/戦略|提案|改善|学習|メモリ/.test(lower)) {
       const memories = await getAllRows("learning_memory").catch(() => []);
@@ -367,6 +385,11 @@ async function generateAIResponse(
 ## パイプライン全体フロー
 A_市場調査 → B_市場選定 → (ユーザー承認) → C_競合調査 → 0_事業案生成 → 1_LP生成 → 2_SNS投稿 → 3_フォーム営業 → 4_分析改善 → 5_Slackレポート → 7_学習エンジン
 
+### 🤖 自律型パイプライン（orchestrate_abc0）
+A→P(痛み抽出)→B→自動承認→C→0→U(ユニットエコノミクス)→E(チェックリスト164項目評価)→I(インタビュースクリプト生成)→自己反省
+を**完全無人で一気通貫実行**するモード。実行には「自律パイプライン実行して」「abc0回して」「パイプライン全部やって」等。
+自己反省で生成されたimprovement_suggestions/risks/next_actionsはpipeline_improvement_logに蓄積され、次回実行に自動反映される。
+
 ## 各ステップの設計
 
 ### A. 市場調査
@@ -407,6 +430,8 @@ target_industries(ターゲット業界), trend_keywords(トレンドKW), explor
 - ideas_per_run: 1回の生成数
 - idea_direction_notes: 事業案の方向性メモ（上書き）
 - market_direction_notes: 市場探索の方向性メモ（上書き）
+- orchestrator_auto_approve: 自律パイプラインの自動承認ON/OFF（true/false）
+- orchestrator_min_score_threshold: 自動承認の最低スコア閾値
 
 ★ 重要: 「追加」vs「変更」の判断ルール:
   - 「〜も追加して」「〜も入れて」→ 既存値にカンマで追加
@@ -597,6 +622,7 @@ async function getPipelineStatus(): Promise<string> {
       "6_ads_monitor": "💰 広告監視",
       "7_learning_engine": "🧠 学習エンジン",
       "8_ads_creator": "📣 広告自動出稿",
+      orchestrate_abc0: "🤖 自律型パイプライン",
     };
 
     const statusEmoji: Record<string, string> = {
