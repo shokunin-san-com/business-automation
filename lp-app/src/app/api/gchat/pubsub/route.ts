@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { getChatAccessToken, getWorkspaceEventsToken } from "@/lib/gcp-auth";
 import { isQuery, isExecutionCommand, handleDataQuery, handleExecutionCommand, saveDirective } from "@/lib/bot-query";
 
@@ -138,6 +139,9 @@ interface ChatAppEvent {
 // POST handler
 // ---------------------------------------------------------------------------
 
+// Vercel max duration: give enough time for Gemini Pro to respond
+export const maxDuration = 120;
+
 export async function POST(request: NextRequest) {
   let body;
   try {
@@ -186,17 +190,33 @@ export async function POST(request: NextRequest) {
   );
 
   // =========================================================================
-  // Mode 1: Workspace Events API — CloudEvents format (preferred)
+  // ACK IMMEDIATELY, process in background via after()
+  // This prevents Pub/Sub from retrying (which causes duplicate messages).
+  // Gemini Pro can take 20-60s to respond — well beyond Pub/Sub's ack deadline.
   // =========================================================================
   if (isWorkspaceEventsMode) {
-    return handleWorkspaceEvent(eventData, ceType, pubsubMessage);
+    after(async () => {
+      try {
+        await handleWorkspaceEvent(eventData, ceType, pubsubMessage);
+      } catch (err) {
+        console.error("[pubsub] Background workspace handler error:", err);
+      }
+    });
+    return NextResponse.json({ ok: true });
   }
 
   // =========================================================================
   // Mode 2: Chat App Pub/Sub — fallback when Workspace Events subscription expires
   // =========================================================================
   if (isChatAppMode) {
-    return handleChatAppEvent(eventData);
+    after(async () => {
+      try {
+        await handleChatAppEvent(eventData);
+      } catch (err) {
+        console.error("[pubsub] Background chatapp handler error:", err);
+      }
+    });
+    return NextResponse.json({ ok: true });
   }
 
   // Unknown format
