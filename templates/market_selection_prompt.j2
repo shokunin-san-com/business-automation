@@ -11,6 +11,13 @@
 {{ knowledge_context }}
 {% endif %}
 
+{% if market_direction_notes %}
+## 運用者の戦略メモ・方向性
+以下は運用者が考えている市場参入の方向性です。この意向をcapability_fit（自社能力適合度）スコアリングに特に反映してください：
+
+{{ market_direction_notes }}
+{% endif %}
+
 ## 評価軸（各1-10点）
 1. **distortion_depth（市場の歪み深さ）**: 非効率・情報非対称・泥臭い手作業が多いほど高い
 2. **entry_barrier（参入容易性）**: 参入障壁が低いほど高スコア（許認可不要、資本集約でない）

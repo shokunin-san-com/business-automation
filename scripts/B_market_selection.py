@@ -50,7 +50,7 @@ def _get_unscored_research() -> list:
 BATCH_SIZE = 5  # Process markets in batches to avoid token limit
 
 
-def score_markets(research_rows: list, settings: dict, knowledge_context: str) -> list:
+def score_markets(research_rows: list, settings: dict, knowledge_context: str, market_direction_notes: str = "") -> list:
     """Use Claude to score each market on the 5-axis matrix.
 
     Processes in batches of BATCH_SIZE to stay within token limits.
@@ -95,6 +95,7 @@ def score_markets(research_rows: list, settings: dict, knowledge_context: str) -
             market_summaries=json.dumps(batch, ensure_ascii=False),
             weights=json.dumps(weights, ensure_ascii=False),
             knowledge_context=knowledge_context,
+            market_direction_notes=market_direction_notes,
         )
 
         result = generate_json(
@@ -175,6 +176,7 @@ def main():
         settings = _load_settings()
         top_n = int(settings.get("selection_top_n", "3"))
         knowledge_context = get_knowledge_summary()
+        market_direction_notes = settings.get("market_direction_notes", "")
         batch_id = datetime.now().strftime("%Y-%m-%d")
 
         unscored = _get_unscored_research()
@@ -186,7 +188,7 @@ def main():
 
         update_status("B_market_selection", "running",
                       f"{len(unscored)}市場をスコアリング中...")
-        selections = score_markets(unscored, settings, knowledge_context)
+        selections = score_markets(unscored, settings, knowledge_context, market_direction_notes)
 
         # Sort by total_score descending
         selections.sort(key=lambda x: float(x.get("total_score", 0)), reverse=True)

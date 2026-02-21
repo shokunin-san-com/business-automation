@@ -51,7 +51,7 @@ def _get_existing_research_ids() -> set:
         return set()
 
 
-def research_market(market_name: str, settings: dict, knowledge_context: str) -> list:
+def research_market(market_name: str, settings: dict, knowledge_context: str, market_direction_notes: str = "") -> list:
     """Generate comprehensive market research for a single market."""
     segments_per_market = int(settings.get("exploration_segments_per_market", "3"))
 
@@ -60,6 +60,7 @@ def research_market(market_name: str, settings: dict, knowledge_context: str) ->
         market_name=market_name,
         segments_per_market=segments_per_market,
         knowledge_context=knowledge_context,
+        market_direction_notes=market_direction_notes,
     )
 
     result = generate_json(
@@ -127,6 +128,7 @@ def main():
 
         existing_ids = _get_existing_research_ids()
         knowledge_context = get_knowledge_summary()
+        market_direction_notes = settings.get("market_direction_notes", "")
         batch_id = datetime.now().strftime("%Y-%m-%d")
 
         all_research = []
@@ -140,7 +142,7 @@ def main():
             update_status("A_market_research", "running", f"調査中: {market}")
             logger.info(f"Researching market: {market}")
 
-            segments = research_market(market, settings, knowledge_context)
+            segments = research_market(market, settings, knowledge_context, market_direction_notes)
             all_research.extend(segments)
 
         count = save_research_to_sheets(all_research, batch_id)

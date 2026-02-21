@@ -509,7 +509,7 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.error("Upload error:", err);
-      alert("アップロード中にエラーが発生しました。PDFが大きすぎるか、接続がタイムアウトした可能性があります。");
+      alert("アップロード中にエラーが発生しました。ファイルが大きすぎるか、接続がタイムアウトした可能性があります。");
     } finally {
       setUploading(false);
     }
@@ -1087,13 +1087,14 @@ export default function DashboardPage() {
                     e.preventDefault();
                     e.stopPropagation();
                     const file = e.dataTransfer.files?.[0];
-                    if (file?.name.endsWith(".pdf")) handleFileUpload(file);
+                    const supportedExts = [".pdf", ".csv", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"];
+                    if (file && supportedExts.some(ext => file.name.toLowerCase().endsWith(ext))) handleFileUpload(file);
                   }}
                 >
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".pdf"
+                    accept=".pdf,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.webp"
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -1103,16 +1104,16 @@ export default function DashboardPage() {
                   {uploading ? (
                     <>
                       <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-400/30 border-t-violet-400" />
-                      <p className="text-sm text-violet-300">PDF{"\u3092\u5206\u6790\u4E2D"}...</p>
-                      <p className="text-[10px] text-white/30">{"\u66F8\u7C4D\u306E\u5185\u5BB9\u3092Claude\u3067\u8981\u7D04\u3057\u3066\u3044\u307E\u3059"}</p>
+                      <p className="text-sm text-violet-300">{"\u30D5\u30A1\u30A4\u30EB\u3092\u5206\u6790\u4E2D"}...</p>
+                      <p className="text-[10px] text-white/30">{"AI\u3067\u30B3\u30F3\u30C6\u30F3\u30C4\u3092\u5206\u6790\u3057\u3066\u3044\u307E\u3059"}</p>
                     </>
                   ) : (
                     <>
                       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-500/10">
-                        <span className="text-2xl">{"\u{1F4C4}"}</span>
+                        <span className="text-2xl">{"\u{1F4CE}"}</span>
                       </div>
-                      <p className="text-sm font-medium text-violet-300">PDF{"\u3092\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9"}</p>
-                      <p className="text-[10px] text-white/30">{"\u30AF\u30EA\u30C3\u30AF\u307E\u305F\u306F\u30C9\u30E9\u30C3\u30B0&\u30C9\u30ED\u30C3\u30D7\u3067\u66F8\u7C4D\u3092\u8FFD\u52A0"}</p>
+                      <p className="text-sm font-medium text-violet-300">{"\u30D5\u30A1\u30A4\u30EB\u3092\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9"}</p>
+                      <p className="text-[10px] text-white/30">{"PDF, CSV, Excel, \u753B\u50CF\u306B\u5BFE\u5FDC"}</p>
                     </>
                   )}
                 </div>
@@ -1130,7 +1131,7 @@ export default function DashboardPage() {
                 ) : knowledgeDocs.length === 0 ? (
                   <div className="rounded-2xl border border-white/[.06] bg-white/[.02] p-8 text-center">
                     <p className="text-sm text-white/30">{"\u307E\u3060\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\u304C\u767B\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093"}</p>
-                    <p className="mt-1 text-[10px] text-white/15">{"\u4E0A\u306EPDF\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\u3067\u66F8\u7C4D\u3092\u8FFD\u52A0\u3057\u3066\u304F\u3060\u3055\u3044"}</p>
+                    <p className="mt-1 text-[10px] text-white/15">{"\u4E0A\u306E\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\u3067\u30D5\u30A1\u30A4\u30EB\u3092\u8FFD\u52A0\u3057\u3066\u304F\u3060\u3055\u3044"}</p>
                   </div>
                 ) : (
                   <div className="grid gap-3 sm:grid-cols-2">

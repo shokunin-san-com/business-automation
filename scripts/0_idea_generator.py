@@ -74,6 +74,9 @@ def generate_ideas() -> list[dict]:
     # Load CEO profile context (if enabled)
     ceo_profile_context = get_ceo_profile_context()
 
+    # Load strategic direction notes
+    idea_direction_notes = settings.get("idea_direction_notes", "")
+
     template = jinja_env.get_template("idea_gen_prompt.j2")
     prompt = template.render(
         target_industries=target_industries,
@@ -83,6 +86,7 @@ def generate_ideas() -> list[dict]:
         exploration_context=exploration_context,
         learning_context=learning_context,
         ceo_profile_context=ceo_profile_context,
+        idea_direction_notes=idea_direction_notes,
     )
 
     logger.info(f"Generating {num_ideas} business ideas...")

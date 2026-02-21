@@ -64,10 +64,10 @@ export default function SettingsPage() {
     ["sender_name", "sender_email", "sender_company"].includes(s.key)
   );
   const ideaSettings = settings.filter((s) =>
-    ["target_industries", "trend_keywords", "ideas_per_run"].includes(s.key)
+    ["target_industries", "trend_keywords", "ideas_per_run", "idea_direction_notes"].includes(s.key)
   );
   const explorationSettings = settings.filter((s) =>
-    ["exploration_markets", "exploration_segments_per_market", "selection_top_n", "competitors_per_market", "exploration_scoring_weights"].includes(s.key)
+    ["exploration_markets", "exploration_segments_per_market", "selection_top_n", "competitors_per_market", "exploration_scoring_weights", "market_direction_notes"].includes(s.key)
   );
   const salesSettings = settings.filter((s) =>
     ["form_sales_per_day", "lp_base_url"].includes(s.key)
@@ -254,6 +254,7 @@ const SETTING_LABELS: Record<string, { label: string; description: string }> = {
   target_industries: { label: "ターゲット業界", description: "事業案生成の対象業界（カンマ区切り）" },
   trend_keywords: { label: "トレンドキーワード", description: "事業案生成に使うキーワード" },
   ideas_per_run: { label: "生成数/回", description: "1回の実行で生成する事業案の数" },
+  idea_direction_notes: { label: "方向性メモ", description: "事業案生成の方向性・考えていること（自由記述、AIプロンプトに反映）" },
   // Form sales
   form_sales_per_day: { label: "フォーム送信数/日", description: "1日あたりの最大フォーム送信数" },
   lp_base_url: { label: "LP ベースURL", description: "LP公開先のベースURL" },
@@ -263,6 +264,7 @@ const SETTING_LABELS: Record<string, { label: string; description: string }> = {
   selection_top_n: { label: "選定上位N件", description: "市場選定で残す上位件数" },
   competitors_per_market: { label: "競合分析数/市場", description: "市場あたりの競合分析企業数" },
   exploration_scoring_weights: { label: "スコアリング重み", description: "市場評価の重み付けJSON" },
+  market_direction_notes: { label: "方向性メモ", description: "市場探索・選定の方向性・考えていること（自由記述、AIプロンプトに反映）" },
   // SNS
   sns_posts_per_day: { label: "SNS投稿数/日", description: "1日あたりのSNS投稿数" },
   // CEO profile
@@ -295,7 +297,8 @@ function SettingRow({
   };
 
   // Use textarea for long values like JSON
-  const isLongValue = setting.key === "ceo_profile_json" || setting.value.length > 100;
+  const TEXTAREA_KEYS = ["ceo_profile_json", "idea_direction_notes", "market_direction_notes"];
+  const isLongValue = TEXTAREA_KEYS.includes(setting.key) || setting.value.length > 100;
 
   return (
     <div className={`flex ${isLongValue ? "flex-col gap-2" : "items-center gap-4"} rounded-xl bg-black/20 p-3`}>
