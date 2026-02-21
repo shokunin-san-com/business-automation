@@ -492,6 +492,17 @@ export default function DashboardPage() {
 
   /* --- Upload PDF --- */
   const handleFileUpload = async (file: File) => {
+    const MAX_SIZE_MB = 4;
+    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+      alert(
+        `ファイルが大きすぎます（${(file.size / 1024 / 1024).toFixed(1)}MB）。\n\n` +
+        `Web UIは${MAX_SIZE_MB}MBまで対応です。\n` +
+        `大きいファイルはターミナルからアップロードしてください:\n\n` +
+        `  python3 scripts/upload_knowledge.py references/${file.name}`
+      );
+      return;
+    }
+
     setUploading(true);
     try {
       const formData = new FormData();
@@ -509,7 +520,7 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.error("Upload error:", err);
-      alert("アップロード中にエラーが発生しました。ファイルが大きすぎるか、接続がタイムアウトした可能性があります。");
+      alert("アップロード中にエラーが発生しました。ファイルが大きすぎるか、接続がタイムアウトした可能性があります。\n\n大きいファイルはターミナルから:\npython3 scripts/upload_knowledge.py references/" + file.name);
     } finally {
       setUploading(false);
     }
@@ -1113,7 +1124,8 @@ export default function DashboardPage() {
                         <span className="text-2xl">{"\u{1F4CE}"}</span>
                       </div>
                       <p className="text-sm font-medium text-violet-300">{"\u30D5\u30A1\u30A4\u30EB\u3092\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9"}</p>
-                      <p className="text-[10px] text-white/30">{"PDF, CSV, Excel, \u753B\u50CF\u306B\u5BFE\u5FDC"}</p>
+                      <p className="text-[10px] text-white/30">{"PDF, CSV, Excel, \u753B\u50CF\u306B\u5BFE\u5FDC\uFF08\u6700\u5927 4MB\uFF09"}</p>
+                      <p className="text-[9px] text-white/20 mt-1">{"4MB\u4EE5\u4E0A\u306E\u30D5\u30A1\u30A4\u30EB\u306F\u30BF\u30FC\u30DF\u30CA\u30EB\u304B\u3089: python3 scripts/upload_knowledge.py references/\u30D5\u30A1\u30A4\u30EB\u540D"}</p>
                     </>
                   )}
                 </div>

@@ -8,8 +8,7 @@ const NAV_ITEMS = [
   { icon: "grid", label: "Dashboard", href: "/dashboard" },
   { icon: "zap", label: "Pipeline", href: "/dashboard?tab=pipeline" },
   { icon: "file", label: "LPs", href: "/" },
-  { icon: "lightbulb", label: "事業案", href: "/ideas" },
-  { icon: "book", label: "Knowledge", href: "/dashboard?tab=knowledge" },
+  { icon: "lightbulb", label: "Ideas", href: "/ideas" },
   { icon: "bar", label: "Analytics", href: "/analytics" },
   { icon: "settings", label: "Settings", href: "/settings" },
 ];
