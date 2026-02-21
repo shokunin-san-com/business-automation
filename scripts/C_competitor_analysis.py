@@ -132,6 +132,7 @@ def save_analysis_to_sheets(
             comp.get("differentiation", ""),
             json.dumps(gap_opps, ensure_ascii=False) if isinstance(gap_opps, list) else str(gap_opps),
             now,
+            comp.get("info_source", ""),
         ])
 
     if rows:

@@ -133,6 +133,7 @@ def save_selections_to_sheets(selections: list, batch_id: str, top_n: int = 3) -
             s.get("pest_summary", ""),
             s.get("five_forces_summary", ""),
             s.get("rationale", ""),
+            json.dumps(s.get("rationale_sources", []), ensure_ascii=False) if isinstance(s.get("rationale_sources"), list) else str(s.get("rationale_sources", "")),
             s.get("recommended_entry_angle", ""),
             status,
             "",  # reviewed_by

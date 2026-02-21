@@ -122,6 +122,7 @@ SHEETS = {
         "regulations",
         "data_sources",
         "confidence_score",
+        "confidence_rationale",
         "status",
         "research_batch_id",
         "created_at",
@@ -140,6 +141,7 @@ SHEETS = {
         "pest_summary",
         "five_forces_summary",
         "rationale",
+        "rationale_sources",
         "recommended_entry_angle",
         "status",
         "reviewed_by",
@@ -162,6 +164,7 @@ SHEETS = {
         "differentiation",
         "gap_opportunities",
         "created_at",
+        "info_source",
     ],
     "performance_log": [
         "id",
