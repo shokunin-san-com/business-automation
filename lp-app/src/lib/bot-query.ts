@@ -401,18 +401,21 @@ target_industries(ターゲット業界), trend_keywords(トレンドKW), explor
 [/SETTINGS_UPDATE]
 
 変更可能キー:
-- target_industries: ターゲット業界（カンマ区切り）。例:「ヘルスケア追加して」→ 既存値にカンマで追加
-- trend_keywords: トレンドキーワード（カンマ区切り）。例:「脱炭素も入れて」→ 既存値にカンマで追加
-- exploration_markets: 探索対象市場（カンマ区切り）。例:「再エネ領域を追加して」→ 既存値にカンマで追加
-- ideas_per_run: 1回の生成数。例:「5件にして」→ "5"
-- idea_direction_notes: 事業案の方向性メモ（上書き）。例:「稟議が短いものを重視して」→ 方向性として保存
-- market_direction_notes: 市場探索の方向性メモ（上書き）。例:「成長率より参入障壁を重視」→ 方向性として保存
+- target_industries: ターゲット業界（カンマ区切り）
+- trend_keywords: トレンドキーワード（カンマ区切り）
+- exploration_markets: 探索対象市場（カンマ区切り）
+- ideas_per_run: 1回の生成数
+- idea_direction_notes: 事業案の方向性メモ（上書き）
+- market_direction_notes: 市場探索の方向性メモ（上書き）
 
-★ 既存値に追加する場合は「現在の設定値」を確認し、カンマで繋げて出力する
-★ 方向性の指示（「〜を重視して」「〜は除外」等）は direction_notes に保存する
-★ 具体的な業界・市場の追加指示は target_industries / exploration_markets に保存する
+★ 重要: 「追加」vs「変更」の判断ルール:
+  - 「〜も追加して」「〜も入れて」→ 既存値にカンマで追加
+  - 「〜に変更して」「〜にして」「〜で」「〜を追加して」（「も」がない）→ 既存値を置き換え
+  - 「〜〇〇領域で〜を追加して」のように新しいテーマを示す場合 → 探索市場を新テーマに置き換え
+  - 迷ったらユーザーに「既存の設定に追加ですか？置き換えですか？」と確認する
+★ 方向性の指示（「〜を重視して」「〜は除外」等）→ direction_notes に保存
+★ 具体的な業界・市場の指示 → target_industries / exploration_markets に保存
 ★ 複合的な指示は複数キーを同時に更新してよい
-  例: 「再エネ領域で稟議が短いものを追加して」→ exploration_markets に「再エネ」追加 + idea_direction_notes に「稟議が短い（導入決裁が早い）案件を重視」
 ★ 質問や分析依頼にはタグ不要。明確な方針変更・指示の場合のみ付ける。
 
 # 回答スタイル
