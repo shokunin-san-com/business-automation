@@ -342,15 +342,26 @@ target_industries(ターゲット業界), trend_keywords(トレンドKW), explor
 - 「この観点も検討してみてはいかがでしょう」等、ユーザーの思考を広げる提案も積極的に`,
     });
 
-    const prompt = `以下のシステムデータを参考に、ユーザーの質問に自然な文章で回答してください。
+    const prompt = `ユーザーの質問に、戦略パートナーとして自然な対話で回答してください。
 
-【システムデータ】
-${dataContext || "データがまだありません。"}
+【質問の意図を判断する基準】
+- 「フロー」「条件」「仕組み」「設計」「どうやって」→ システム設計（system instructionの知識）に基づいて回答
+- 「状況」「成果」「何件」「結果」→ 以下の実績データに基づいて回答
+- 戦略相談・壁打ち → システム知識 + 実績データ + あなた自身の知見を組み合わせて回答
 
-【ユーザーの質問】
+【現在の実績データ（参考）】
+${dataContext || "まだ実績データはありません。"}
+
+【ユーザーのメッセージ】
 ${userMessage}`;
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: 4096,
+        temperature: 0.7,
+      },
+    });
     const text = result.response.text();
     if (text && text.trim()) return text.trim();
   } catch (err) {
