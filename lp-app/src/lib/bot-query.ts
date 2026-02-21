@@ -45,6 +45,7 @@ export function isQuery(text: string): boolean {
   if (/提案して|提案|分析して|出して|表示して|一覧|リスト|サマリー|概要|戦略|方針/.test(lower)) return true;
   if (/パイプライン|ステータス|最新|直近|今日|今週|結果/.test(lower)) return true;
   if (/今後|改善|課題|傾向|推移|比較/.test(lower)) return true;
+  if (/フロー|条件|仕組み|手順|説明|内容|キーポイント|ポイント|整理/.test(lower)) return true;
   return false;
 }
 
@@ -52,32 +53,47 @@ export function isQuery(text: string): boolean {
 // Execution command detection & handler
 // ---------------------------------------------------------------------------
 
+/**
+ * Action verbs that explicitly mean "run this job".
+ * IMPORTANT: `して` alone is too ambiguous — it matches `出して`, `まとめて`, etc.
+ * Only match `して` when preceded by `を` (e.g., `市場調査をして`), not as part of
+ * compound verbs like `出して`, `教えて`, `見せて`.
+ */
+const ACTION_VERBS = "実行|をして|やって|走らせ|開始|回して|かけて|お願い|頼む|頼み";
+
 /** Map of keyword patterns to script IDs for execution commands */
 const EXEC_PATTERNS: { pattern: RegExp; scriptId: string; label: string }[] = [
-  { pattern: /市場(調査|リサーチ).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "A_market_research", label: "市場調査" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*市場(調査|リサーチ)/, scriptId: "A_market_research", label: "市場調査" },
-  { pattern: /市場選定.*(実行|して|やって|走らせ|開始|回して)/, scriptId: "B_market_selection", label: "市場選定" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*市場選定/, scriptId: "B_market_selection", label: "市場選定" },
-  { pattern: /競合(調査|分析).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "C_competitor_analysis", label: "競合調査" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*競合(調査|分析)/, scriptId: "C_competitor_analysis", label: "競合調査" },
-  { pattern: /事業案.*(生成|作|実行|して|やって|走らせ|開始|回して)/, scriptId: "0_idea_generator", label: "事業案生成" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*事業案/, scriptId: "0_idea_generator", label: "事業案生成" },
-  { pattern: /lp.*(生成|作|実行|して|やって|走らせ|開始|回して)/, scriptId: "1_lp_generator", label: "LP生成" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*lp/, scriptId: "1_lp_generator", label: "LP生成" },
-  { pattern: /sns.*(投稿|実行|して|やって|走らせ|開始|回して)/, scriptId: "2_sns_poster", label: "SNS投稿" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*sns/, scriptId: "2_sns_poster", label: "SNS投稿" },
-  { pattern: /フォーム(営業|送信).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "3_form_sales", label: "フォーム営業" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*フォーム(営業|送信)/, scriptId: "3_form_sales", label: "フォーム営業" },
-  { pattern: /(分析|アナリティクス).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "4_analytics_reporter", label: "分析・改善" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*(分析|アナリティクス)/, scriptId: "4_analytics_reporter", label: "分析・改善" },
-  { pattern: /(slack|レポート).*(実行|して|やって|走らせ|開始|回して|送|配信)/, scriptId: "5_slack_reporter", label: "Slackレポート" },
-  { pattern: /広告(監視|モニター).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "6_ads_monitor", label: "広告監視" },
-  { pattern: /学習.*(実行|して|やって|走らせ|開始|回して|回)/, scriptId: "7_learning_engine", label: "学習エンジン" },
-  { pattern: /(実行|して|やって|走らせ|開始|回して).*学習/, scriptId: "7_learning_engine", label: "学習エンジン" },
+  { pattern: new RegExp(`市場(調査|リサーチ).*(${ACTION_VERBS})`), scriptId: "A_market_research", label: "市場調査" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*市場(調査|リサーチ)`), scriptId: "A_market_research", label: "市場調査" },
+  { pattern: new RegExp(`市場選定.*(${ACTION_VERBS})`), scriptId: "B_market_selection", label: "市場選定" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*市場選定`), scriptId: "B_market_selection", label: "市場選定" },
+  { pattern: new RegExp(`競合(調査|分析).*(${ACTION_VERBS})`), scriptId: "C_competitor_analysis", label: "競合調査" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*競合(調査|分析)`), scriptId: "C_competitor_analysis", label: "競合調査" },
+  { pattern: new RegExp(`事業案.*(生成|作って|${ACTION_VERBS})`), scriptId: "0_idea_generator", label: "事業案生成" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*事業案`), scriptId: "0_idea_generator", label: "事業案生成" },
+  { pattern: new RegExp(`lp.*(生成|作って|${ACTION_VERBS})`), scriptId: "1_lp_generator", label: "LP生成" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*lp`), scriptId: "1_lp_generator", label: "LP生成" },
+  { pattern: new RegExp(`sns.*(投稿|${ACTION_VERBS})`), scriptId: "2_sns_poster", label: "SNS投稿" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*sns`), scriptId: "2_sns_poster", label: "SNS投稿" },
+  { pattern: new RegExp(`フォーム(営業|送信).*(${ACTION_VERBS})`), scriptId: "3_form_sales", label: "フォーム営業" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*フォーム(営業|送信)`), scriptId: "3_form_sales", label: "フォーム営業" },
+  { pattern: new RegExp(`(分析|アナリティクス).*(${ACTION_VERBS})`), scriptId: "4_analytics_reporter", label: "分析・改善" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*(分析|アナリティクス)`), scriptId: "4_analytics_reporter", label: "分析・改善" },
+  { pattern: new RegExp(`(slack|レポート).*(${ACTION_VERBS}|送|配信)`), scriptId: "5_slack_reporter", label: "Slackレポート" },
+  { pattern: new RegExp(`広告(監視|モニター).*(${ACTION_VERBS})`), scriptId: "6_ads_monitor", label: "広告監視" },
+  { pattern: new RegExp(`学習.*(${ACTION_VERBS}|回)`), scriptId: "7_learning_engine", label: "学習エンジン" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*学習`), scriptId: "7_learning_engine", label: "学習エンジン" },
 ];
 
-/** Detect if the message is an execution command */
+/** Detect if the message is an execution command.
+ *  Returns null if the message looks like a question/query — even if it
+ *  contains job-related keywords like "市場調査".
+ */
 export function isExecutionCommand(text: string): { scriptId: string; label: string } | null {
+  // If the message reads like a question, never treat it as an execution command.
+  // e.g. "市場調査のフローを出して" is a question, NOT "run market research".
+  if (isQuery(text)) return null;
+
   const lower = text.toLowerCase();
   for (const { pattern, scriptId, label } of EXEC_PATTERNS) {
     if (pattern.test(lower)) return { scriptId, label };
