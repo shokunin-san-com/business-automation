@@ -33,33 +33,37 @@ def get_ceo_profile_context() -> str:
     """Get CEO profile formatted for prompt injection.
 
     Returns empty string if use_ceo_profile is false.
+    Supports both JSON format (legacy) and free-text format.
     """
     settings = _load_settings()
 
     if settings.get("use_ceo_profile", "false").lower() != "true":
         return ""
 
-    raw = settings.get("ceo_profile_json", "")
+    raw = settings.get("ceo_profile_json", "").strip()
     if not raw:
         return ""
 
+    # Try JSON format first (legacy support)
     try:
         profile = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse ceo_profile_json")
-        return ""
+        parts = [
+            f"CEO: {profile.get('name', 'N/A')}",
+            "",
+            "## 強み・経験",
+        ]
+        for s in profile.get("strengths", []):
+            parts.append(f"- {s}")
 
-    parts = [
-        f"CEO: {profile.get('name', 'N/A')}",
-        "",
-        "## 強み・経験",
-    ]
-    for s in profile.get("strengths", []):
-        parts.append(f"- {s}")
+        parts.append("")
+        parts.append(f"## 得意業界: {', '.join(profile.get('industries', []))}")
+        parts.append(f"## モチベーション: {', '.join(profile.get('motivators', []))}")
+        parts.append(f"## 保有資格・許認可: {', '.join(profile.get('licenses', []))}")
 
-    parts.append("")
-    parts.append(f"## 得意業界: {', '.join(profile.get('industries', []))}")
-    parts.append(f"## モチベーション: {', '.join(profile.get('motivators', []))}")
-    parts.append(f"## 保有資格・許認可: {', '.join(profile.get('licenses', []))}")
+        return "\n".join(parts)
+    except (json.JSONDecodeError, AttributeError):
+        pass
 
-    return "\n".join(parts)
+    # Free-text format: return as-is
+    logger.info("Using free-text CEO profile")
+    return raw
