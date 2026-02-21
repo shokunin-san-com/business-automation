@@ -149,7 +149,8 @@ export async function GET() {
           recommended_entry_angle: row.recommended_entry_angle || "",
           rationale: row.rationale || "",
           created_at: row.created_at || "",
-        }));
+        }))
+        .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
     } catch { /* sheet may not exist yet */ }
 
     // --- Scheduler status from Cloud Scheduler API ---

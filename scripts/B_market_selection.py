@@ -112,11 +112,12 @@ def score_markets(research_rows: list, settings: dict, knowledge_context: str) -
     return all_results
 
 
-def save_selections_to_sheets(selections: list, batch_id: str) -> int:
+def save_selections_to_sheets(selections: list, batch_id: str, top_n: int = 3) -> int:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     rows = []
 
     for i, s in enumerate(selections):
+        status = "pending_review" if i < top_n else "scored"
         rows.append([
             f"sel-{s.get('market_research_id', 'unknown')}-{batch_id}",
             s.get("market_research_id", ""),
@@ -132,7 +133,7 @@ def save_selections_to_sheets(selections: list, batch_id: str) -> int:
             s.get("five_forces_summary", ""),
             s.get("rationale", ""),
             s.get("recommended_entry_angle", ""),
-            "pending_review",
+            status,
             "",  # reviewed_by
             batch_id,
             now,
@@ -154,7 +155,7 @@ def notify_slack_approval(selections: list, top_n: int) -> None:
     for i, s in enumerate(top_markets):
         lines.append(
             f"*{i+1}. {s.get('market_name', '')}* "
-            f"(スコア: {s.get('total_score', 0)}/50)\n"
+            f"(スコア: {s.get('total_score', 0)}/100)\n"
             f"  推奨参入角度: {str(s.get('recommended_entry_angle', ''))[:80]}"
         )
 
@@ -190,7 +191,7 @@ def main():
         # Sort by total_score descending
         selections.sort(key=lambda x: float(x.get("total_score", 0)), reverse=True)
 
-        count = save_selections_to_sheets(selections, batch_id)
+        count = save_selections_to_sheets(selections, batch_id, top_n=top_n)
 
         if count > 0:
             notify_slack_approval(selections, top_n)

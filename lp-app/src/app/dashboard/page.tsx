@@ -708,7 +708,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{market.market_name}</p>
                         <span className="rounded-md bg-blue-500/15 px-2 py-0.5 text-[10px] text-blue-400 border border-blue-500/20">
-                          {"\u30B9\u30B3\u30A2"}: {market.total_score}/50
+                          {"\u30B9\u30B3\u30A2"}: {market.total_score}/100
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-white/40 line-clamp-2">{market.recommended_entry_angle}</p>
