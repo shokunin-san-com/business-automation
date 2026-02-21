@@ -290,7 +290,7 @@ async function generateAIResponse(
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+      model: process.env.GEMINI_CHAT_MODEL || "gemini-2.5-pro",
       systemInstruction: `あなたはBVA System（事業検証自動化システム）の戦略パートナーAIです。
 ユーザー（CEO）とGoogle Chatで壁打ち・議論・戦略検討を行います。
 
