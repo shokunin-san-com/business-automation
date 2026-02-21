@@ -17,7 +17,22 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((d) => setSettings(d.settings || []))
+      .then((d) => {
+        const fetched: Setting[] = d.settings || [];
+        // Ensure sender settings always exist (even if not in sheet)
+        const requiredKeys = [
+          { key: "sender_name", value: "" },
+          { key: "sender_email", value: "" },
+          { key: "sender_company", value: "" },
+        ];
+        const existingKeys = new Set(fetched.map((s) => s.key));
+        for (const req of requiredKeys) {
+          if (!existingKeys.has(req.key)) {
+            fetched.unshift(req);
+          }
+        }
+        setSettings(fetched);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -51,8 +66,14 @@ export default function SettingsPage() {
   const ideaSettings = settings.filter((s) =>
     ["target_industries", "trend_keywords", "ideas_per_run"].includes(s.key)
   );
+  const explorationSettings = settings.filter((s) =>
+    ["exploration_markets", "exploration_segments_per_market", "selection_top_n", "competitors_per_market", "exploration_scoring_weights"].includes(s.key)
+  );
   const salesSettings = settings.filter((s) =>
     ["form_sales_per_day", "lp_base_url"].includes(s.key)
+  );
+  const snsSettings = settings.filter((s) =>
+    ["sns_posts_per_day"].includes(s.key)
   );
   const ceoSettings = settings.filter((s) =>
     ["use_ceo_profile", "ceo_profile_json"].includes(s.key)
@@ -67,8 +88,8 @@ export default function SettingsPage() {
     ["slack_notification", "auto_approve", "risk_threshold"].includes(s.key)
   );
   const knownKeys = new Set([
-    ...senderSettings, ...ideaSettings, ...salesSettings, ...ceoSettings,
-    ...killSettings, ...budgetSettings, ...systemSettings,
+    ...senderSettings, ...ideaSettings, ...explorationSettings, ...salesSettings,
+    ...snsSettings, ...ceoSettings, ...killSettings, ...budgetSettings, ...systemSettings,
   ].map((s) => s.key));
   const otherSettings = settings.filter((s) => !knownKeys.has(s.key));
 
@@ -117,12 +138,30 @@ export default function SettingsPage() {
               ))}
             </SettingsSection>
 
+            {/* Exploration & Selection Settings */}
+            {explorationSettings.length > 0 && (
+              <SettingsSection title="🔍 市場探索・選定" description="市場リサーチ・競合分析に関する設定">
+                {explorationSettings.map((s) => (
+                  <SettingRow key={s.key} setting={s} onChange={updateSetting} />
+                ))}
+              </SettingsSection>
+            )}
+
             {/* Sales Settings */}
             <SettingsSection title="✉️ フォーム営業" description="自動フォーム営業に関する設定">
               {salesSettings.map((s) => (
                 <SettingRow key={s.key} setting={s} onChange={updateSetting} />
               ))}
             </SettingsSection>
+
+            {/* SNS Settings */}
+            {snsSettings.length > 0 && (
+              <SettingsSection title="📱 SNS投稿" description="SNS自動投稿に関する設定">
+                {snsSettings.map((s) => (
+                  <SettingRow key={s.key} setting={s} onChange={updateSetting} />
+                ))}
+              </SettingsSection>
+            )}
 
             {/* CEO Profile Settings */}
             {ceoSettings.length > 0 && (
@@ -218,6 +257,14 @@ const SETTING_LABELS: Record<string, { label: string; description: string }> = {
   // Form sales
   form_sales_per_day: { label: "フォーム送信数/日", description: "1日あたりの最大フォーム送信数" },
   lp_base_url: { label: "LP ベースURL", description: "LP公開先のベースURL" },
+  // Exploration & Selection
+  exploration_markets: { label: "探索対象市場", description: "市場リサーチの対象（カンマ区切り）" },
+  exploration_segments_per_market: { label: "セグメント数/市場", description: "市場あたりの探索セグメント数" },
+  selection_top_n: { label: "選定上位N件", description: "市場選定で残す上位件数" },
+  competitors_per_market: { label: "競合分析数/市場", description: "市場あたりの競合分析企業数" },
+  exploration_scoring_weights: { label: "スコアリング重み", description: "市場評価の重み付けJSON" },
+  // SNS
+  sns_posts_per_day: { label: "SNS投稿数/日", description: "1日あたりのSNS投稿数" },
   // CEO profile
   use_ceo_profile: { label: "CEO経歴スコアリング", description: "true / false（有効化するとCEO経歴でスコアリング）" },
   ceo_profile_json: { label: "CEO経歴JSON", description: "JSON形式のCEO経歴データ" },

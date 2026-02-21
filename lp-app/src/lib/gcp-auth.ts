@@ -69,6 +69,39 @@ export async function getChatAccessToken(): Promise<string> {
 }
 
 /**
+ * Get a user OAuth2 access token for Workspace Events API.
+ * Uses refresh_token flow (no browser interaction needed).
+ */
+export async function getWorkspaceEventsToken(): Promise<string> {
+  const clientId = process.env.WORKSPACE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.WORKSPACE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.WORKSPACE_OAUTH_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error("Missing WORKSPACE_OAUTH_* environment variables");
+  }
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to refresh workspace events token: ${res.status} ${err}`);
+  }
+
+  const data = await res.json();
+  return data.access_token;
+}
+
+/**
  * Job name to Cloud Run Job ID mapping.
  */
 export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getChatAccessToken } from "@/lib/gcp-auth";
+import { getChatAccessToken, getWorkspaceEventsToken } from "@/lib/gcp-auth";
 import { isQuery, handleDataQuery, saveDirective } from "@/lib/bot-query";
 
 /**
@@ -294,7 +294,8 @@ async function handleWorkspaceEvent(
     // Handle lifecycle events (subscription expiration reminders)
     if (ceType.includes("subscription")) {
       console.log(`[pubsub/workspace] Lifecycle event: ${ceType}`);
-      // TODO: Auto-renew subscription on expiration reminder
+      // Auto-renew subscription before it expires
+      await renewSubscription(eventData);
     } else {
       console.log(`[pubsub/workspace] Ignoring event type: ${ceType}`);
     }
@@ -352,4 +353,81 @@ async function handleWorkspaceEvent(
   }
 
   return NextResponse.json({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Subscription auto-renewal
+// ---------------------------------------------------------------------------
+
+const WORKSPACE_EVENTS_API = "https://workspaceevents.googleapis.com/v1";
+const SPACE_NAME = "spaces/AAQA_WcWZmg";
+const PUBSUB_TOPIC = "projects/marketprobe-automation/topics/gchat-space-events";
+
+/** Renew an expiring Workspace Events API subscription */
+async function renewSubscription(eventData: ChatAppEvent) {
+  try {
+    const token = await getWorkspaceEventsToken();
+
+    // Extract current subscription name from event data if available
+    const subName =
+      (eventData as Record<string, unknown>).subscription as string | undefined;
+
+    if (subName) {
+      // Try to PATCH (update) the existing subscription to extend TTL
+      console.log(`[pubsub/workspace] Renewing subscription: ${subName}`);
+      const patchRes = await fetch(`${WORKSPACE_EVENTS_API}/${subName}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          eventTypes: ["google.workspace.chat.message.v1.created"],
+        }),
+      });
+
+      if (patchRes.ok) {
+        console.log("[pubsub/workspace] Subscription renewed via PATCH");
+        return;
+      }
+      console.warn(
+        `[pubsub/workspace] PATCH failed (${patchRes.status}), will recreate`,
+      );
+    }
+
+    // Fallback: delete + create
+    if (subName) {
+      console.log(`[pubsub/workspace] Deleting old subscription: ${subName}`);
+      await fetch(`${WORKSPACE_EVENTS_API}/${subName}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+
+    // Create new subscription
+    console.log("[pubsub/workspace] Creating new subscription");
+    const createRes = await fetch(`${WORKSPACE_EVENTS_API}/subscriptions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        targetResource: `//chat.googleapis.com/${SPACE_NAME}`,
+        eventTypes: ["google.workspace.chat.message.v1.created"],
+        notificationEndpoint: { pubsubTopic: PUBSUB_TOPIC },
+        payloadOptions: { includeResource: true },
+      }),
+    });
+
+    if (createRes.ok) {
+      const data = await createRes.json();
+      console.log("[pubsub/workspace] New subscription created:", JSON.stringify(data).substring(0, 200));
+    } else {
+      const err = await createRes.text();
+      console.error(`[pubsub/workspace] Failed to create subscription: ${createRes.status} ${err.substring(0, 300)}`);
+    }
+  } catch (err) {
+    console.error("[pubsub/workspace] Error renewing subscription:", err);
+  }
 }

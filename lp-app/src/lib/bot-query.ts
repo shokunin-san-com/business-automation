@@ -3,6 +3,7 @@
  */
 import crypto from "crypto";
 import { getAllRows, appendRows, ensureSheetExists } from "@/lib/sheets";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const LEARNING_HEADERS = [
   "id", "type", "source", "category", "content",
@@ -57,6 +58,13 @@ export async function handleDataQuery(message: string): Promise<string> {
   if (/なんの(チャット|アプリ|ボット|システム)|何これ|使い方|ヘルプ|help|わかるように|説明して|どういう/.test(lower)) {
     return getSystemExplanation();
   }
+
+  // Collect relevant data context, then let AI generate a natural response
+  const dataContext = await gatherDataContext(lower);
+  const aiReply = await generateAIResponse(message, dataContext);
+  if (aiReply) return aiReply;
+
+  // Fallback: template-based responses if AI is unavailable
   if (/戦略|提案|方針|今後|改善|課題/.test(lower)) {
     return await getStrategySummary();
   }
@@ -73,6 +81,133 @@ export async function handleDataQuery(message: string): Promise<string> {
     return await getIdeasSummary();
   }
   return await getOverview();
+}
+
+/** Gather relevant data based on message keywords */
+async function gatherDataContext(lower: string): Promise<string> {
+  const parts: string[] = [];
+
+  try {
+    // Always include basic overview
+    const [ideas, status, analytics, snsPosts] = await Promise.all([
+      getAllRows("business_ideas").catch(() => []),
+      getAllRows("pipeline_status").catch(() => []),
+      getAllRows("analytics").catch(() => []),
+      getAllRows("sns_posts").catch(() => []),
+    ]);
+
+    const activeIdeas = ideas.filter((i) => i.status === "active");
+    const pendingIdeas = ideas.filter((i) => i.status === "pending_approval");
+    const errors = status.filter((s) => s.status === "error");
+
+    parts.push(`【事業案】合計${ideas.length}件、アクティブ${activeIdeas.length}件、承認待ち${pendingIdeas.length}件`);
+
+    if (activeIdeas.length > 0) {
+      const names = activeIdeas.slice(0, 5).map((i) => i.name || i.id).join(", ");
+      parts.push(`アクティブ事業: ${names}`);
+    }
+
+    // Pipeline status
+    if (status.length > 0) {
+      const statusSummary = status.map((s) => {
+        const name = s.script_name || s.script_id || "不明";
+        return `${name}: ${s.status}${s.detail ? ` (${s.detail})` : ""}`;
+      }).join("; ");
+      parts.push(`【パイプライン】${statusSummary}`);
+      if (errors.length > 0) parts.push(`エラー: ${errors.length}件`);
+    }
+
+    // Analytics
+    if (analytics.length > 0) {
+      const latestByBiz: Record<string, typeof analytics[0]> = {};
+      for (const entry of analytics) {
+        const bid = entry.business_id || "";
+        if (!latestByBiz[bid] || (entry.date || "") > (latestByBiz[bid].date || "")) {
+          latestByBiz[bid] = entry;
+        }
+      }
+      const totalPV = Object.values(latestByBiz).reduce((s, e) => s + (Number(e.pageviews) || 0), 0);
+      const totalCV = Object.values(latestByBiz).reduce((s, e) => s + (Number(e.conversions) || 0), 0);
+      parts.push(`【LP成果】合計PV: ${totalPV}, CV: ${totalCV}`);
+
+      if (/lp|成果|pv|コンバージョン|分析|アクセス/.test(lower)) {
+        for (const [bid, data] of Object.entries(latestByBiz).slice(0, 5)) {
+          const idea = ideas.find((i) => i.id === bid);
+          parts.push(`  ${idea?.name || bid}: PV${data.pageviews} / CV${data.conversions} / 直帰率${data.bounce_rate}%`);
+        }
+      }
+    }
+
+    // SNS
+    if (snsPosts.length > 0) {
+      const recent = snsPosts.slice(-5).reverse();
+      parts.push(`【SNS】直近投稿${snsPosts.length}件`);
+      if (/sns|投稿|ツイート/.test(lower)) {
+        for (const p of recent) {
+          parts.push(`  [${p.platform}] ${p.status} — ${(p.content || "").substring(0, 40)}`);
+        }
+      }
+    }
+
+    // Learning memory
+    if (/戦略|提案|改善|学習|メモリ/.test(lower)) {
+      const memories = await getAllRows("learning_memory").catch(() => []);
+      const active = memories.filter((m) => m.status === "active").slice(-5);
+      if (active.length > 0) {
+        parts.push(`【学習メモリ】直近${active.length}件:`);
+        for (const m of active) {
+          parts.push(`  [${m.category}] ${(m.content || "").substring(0, 60)}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[bot-query] Error gathering data:", err);
+  }
+
+  return parts.join("\n");
+}
+
+/** Generate a natural AI response using Gemini */
+async function generateAIResponse(
+  userMessage: string,
+  dataContext: string,
+): Promise<string | null> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+      systemInstruction: `あなたはBVA System（事業検証自動化システム）のアシスタントです。
+Google Chatでユーザーからの質問に答えます。
+
+ルール:
+- 日本語で簡潔に回答（Google Chat向けなので長すぎないこと）
+- データに基づいて具体的に回答
+- 不明な点は正直に「データがありません」と言う
+- Google Chat形式のマークダウン（*太字*）を使う
+- 絵文字を適度に使って読みやすく
+- 戦略的な提案を求められたら、データを根拠にアクションを提案
+- 最大500文字程度に収める`,
+    });
+
+    const prompt = `以下のシステムデータを参考に、ユーザーの質問に自然な文章で回答してください。
+
+【システムデータ】
+${dataContext || "データがまだありません。"}
+
+【ユーザーの質問】
+${userMessage}`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    if (text && text.trim()) return text.trim();
+  } catch (err) {
+    console.error("[bot-query] AI generation failed, falling back to template:", err);
+  }
+
+  return null;
 }
 
 function getSystemExplanation(): string {
