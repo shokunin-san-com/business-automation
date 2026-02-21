@@ -107,7 +107,7 @@ interface ChatAppEvent {
     argumentText?: string;
     sender?: { displayName?: string; name?: string; type?: string };
     thread?: { name?: string };
-    space?: { name?: string; displayName?: string };
+    space?: { name?: string; displayName?: string; type?: string };
     annotations?: { type?: string; userMention?: { user?: { name?: string; type?: string } } }[];
   };
   user?: { displayName?: string; name?: string; type?: string };
@@ -345,15 +345,20 @@ async function handleWorkspaceEvent(
     return NextResponse.json({ ok: true });
   }
 
-  // Only respond to messages that mention the bot (@BVA System)
-  // Check annotations for bot mention, or @BVA in raw text
+  // Only respond to messages directed at the bot.
+  // In external spaces, @BVA System mention may not work, so also accept:
+  //   - annotation-based bot mention (internal spaces)
+  //   - "bva" or "/bva" at the start of the message (external spaces)
+  //   - DM spaces always respond
   const rawText = msg.text || "";
   const hasBotAnnotation = msg.annotations?.some(
     (a) => a.type === "USER_MENTION" && a.userMention?.user?.type === "BOT"
   ) ?? false;
-  const hasTextMention = /@bva/i.test(rawText);
-  if (!hasBotAnnotation && !hasTextMention) {
-    console.log("[pubsub/workspace] No bot mention, skipping");
+  const startsWithTrigger = /^(\/bva|bva)\b/i.test(rawText.trim());
+  const spaceType = msg.space?.type || eventData.space?.type || "";
+  const isDM = spaceType === "DM";
+  if (!isDM && !hasBotAnnotation && !startsWithTrigger) {
+    console.log("[pubsub/workspace] No bot trigger, skipping");
     return NextResponse.json({ ok: true });
   }
 
