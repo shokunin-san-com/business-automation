@@ -52,18 +52,24 @@ def _generate_posts(idea: dict, platform: str, learning_context: str = "") -> li
         description=idea.get("description", ""),
         target_audience=idea.get("target_audience", ""),
         lp_url=lp_url,
-        num_posts=2,
+        num_posts=1,
         learning_context=learning_context,
     )
 
-    posts = generate_json(
-        prompt=prompt,
-        system="あなたは日本語SNSマーケティングの専門家です。",
-        max_tokens=2048,
-        temperature=0.8,
-    )
+    # Try with sufficient tokens; retry once with higher limit on parse failure
+    for attempt, tokens in enumerate([4096, 8192], 1):
+        posts = generate_json(
+            prompt=prompt,
+            system="あなたは日本語SNSマーケティングの専門家です。JSON配列を返してください。",
+            max_tokens=tokens,
+            temperature=0.8,
+        )
+        texts = [p["text"] for p in posts if isinstance(p, dict) and "text" in p]
+        if texts:
+            return texts
+        logger.warning(f"Attempt {attempt}: generate_json returned no valid posts (tokens={tokens})")
 
-    return [p["text"] for p in posts if "text" in p]
+    return []
 
 
 def _record_post(
@@ -96,7 +102,7 @@ def _try_post(
             slack_notify(
                 f":x: *{platform}投稿に失敗* しました\n"
                 f"事業案: {idea['name']}\n"
-                f"APIエラーが発生しました。認証情報を確認してください。"
+                f"API投稿エラー（403の場合: 月間投稿上限 or 重複コンテンツの可能性）"
             )
             return "error", ""
 

@@ -49,6 +49,13 @@ def post_tweet(text: str) -> dict | None:
         url = f"https://x.com/i/web/status/{tweet_id}"
         logger.info(f"Tweet posted: {url}")
         return {"id": tweet_id, "url": url}
+    except tweepy.errors.Forbidden as e:
+        logger.error(f"Failed to post tweet: 403 Forbidden — {e}. "
+                      "Possible: monthly post limit reached, duplicate content, or app permissions.")
+        return None
+    except tweepy.errors.TooManyRequests as e:
+        logger.error(f"Failed to post tweet: 429 Rate limit — {e}")
+        return None
     except Exception as e:
         logger.error(f"Failed to post tweet: {e}")
         return None
