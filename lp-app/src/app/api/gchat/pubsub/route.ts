@@ -166,15 +166,9 @@ export async function POST(request: NextRequest) {
   }
 
   // =========================================================================
-  // Mode 2: Chat App Pub/Sub — skip MESSAGE events to avoid duplicate replies
-  // (Workspace Events API already handles message events)
+  // Mode 2: Chat App Pub/Sub — fallback when Workspace Events subscription expires
   // =========================================================================
   if (isChatAppMode) {
-    const eventType = eventData.type || "";
-    if (eventType === "MESSAGE") {
-      console.log("[pubsub/chatapp] Skipping MESSAGE (handled by WorkspaceEvents)");
-      return NextResponse.json({ ok: true });
-    }
     return handleChatAppEvent(eventData);
   }
 
@@ -216,10 +210,10 @@ async function handleChatAppEvent(event: ChatAppEvent) {
   // MESSAGE
   if (eventType === "MESSAGE") {
     const message = event.message;
-    const messageText =
+    const rawText =
       message?.argumentText?.trim() || message?.text?.trim() || "";
 
-    if (!messageText) {
+    if (!rawText) {
       if (event.space?.name) {
         const token = await getChatAccessToken();
         await postChatMessage(
@@ -240,6 +234,22 @@ async function handleChatAppEvent(event: ChatAppEvent) {
       return NextResponse.json({ ok: true });
     }
 
+    // Check for bot trigger: DM, @mention, or "bva" prefix
+    const hasBotAnnotation = message?.annotations?.some(
+      (a) => a.type === "USER_MENTION" && a.userMention?.user?.type === "BOT"
+    ) ?? false;
+    const startsWithTrigger = /^(\/bva|bva)\b/i.test(rawText);
+    const spaceType = event.space?.type || "";
+    const isDM = spaceType === "DM";
+
+    if (!isDM && !hasBotAnnotation && !startsWithTrigger) {
+      console.log("[pubsub/chatapp] No bot trigger, skipping");
+      return NextResponse.json({ ok: true });
+    }
+
+    // Strip "bva" prefix from the message text
+    const messageText = rawText.replace(/^(\/bva|bva)\s*/i, "").trim();
+
     const senderName =
       message?.sender?.displayName ||
       event.user?.displayName ||
@@ -253,13 +263,17 @@ async function handleChatAppEvent(event: ChatAppEvent) {
 
     // Process: execution command > query > directive
     let reply: string;
-    const execCmd = isExecutionCommand(messageText);
-    if (execCmd) {
-      reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
-    } else if (isQuery(messageText)) {
-      reply = await handleDataQuery(messageText);
+    if (!messageText) {
+      reply = "何をお手伝いしましょうか？\n例: 「パイプライン状況教えて」「LP成果どう？」";
     } else {
-      reply = await saveDirective(messageText, "gchat", senderName, spaceName);
+      const execCmd = isExecutionCommand(messageText);
+      if (execCmd) {
+        reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
+      } else if (isQuery(messageText)) {
+        reply = await handleDataQuery(messageText);
+      } else {
+        reply = await saveDirective(messageText, "gchat", senderName, spaceName);
+      }
     }
 
     // Post the reply via Chat API
