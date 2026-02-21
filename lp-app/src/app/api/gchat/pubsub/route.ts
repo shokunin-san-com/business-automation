@@ -108,6 +108,7 @@ interface ChatAppEvent {
     sender?: { displayName?: string; name?: string; type?: string };
     thread?: { name?: string };
     space?: { name?: string; displayName?: string };
+    annotations?: { type?: string; userMention?: { user?: { name?: string; type?: string } } }[];
   };
   user?: { displayName?: string; name?: string; type?: string };
   [key: string]: unknown;
@@ -345,11 +346,13 @@ async function handleWorkspaceEvent(
   }
 
   // Only respond to messages that mention the bot (@BVA System)
-  // argumentText is present when the bot is mentioned (text with mention stripped)
-  // Also check for explicit mention in the raw text
+  // Check annotations for bot mention, or @BVA in raw text
   const rawText = msg.text || "";
-  const hasMention = !!msg.argumentText || /bva|ボット|bot/i.test(rawText);
-  if (!hasMention) {
+  const hasBotAnnotation = msg.annotations?.some(
+    (a) => a.type === "USER_MENTION" && a.userMention?.user?.type === "BOT"
+  ) ?? false;
+  const hasTextMention = /@bva/i.test(rawText);
+  if (!hasBotAnnotation && !hasTextMention) {
     console.log("[pubsub/workspace] No bot mention, skipping");
     return NextResponse.json({ ok: true });
   }
