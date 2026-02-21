@@ -150,25 +150,31 @@ export async function POST(request: NextRequest) {
 
   // Detect which mode based on attributes or event structure
   const ceType = pubsubMessage.attributes?.["ce-type"] || "";
-  const isChatAppMode = !!eventData.type && !ceType;
   const isWorkspaceEventsMode = !!ceType;
+  const isChatAppMode = !!eventData.type && !ceType;
 
   console.log(
-    `[pubsub] Mode: ${isChatAppMode ? "ChatApp" : isWorkspaceEventsMode ? "WorkspaceEvents" : "Unknown"}`,
+    `[pubsub] Mode: ${isWorkspaceEventsMode ? "WorkspaceEvents" : isChatAppMode ? "ChatApp" : "Unknown"}`,
   );
 
   // =========================================================================
-  // Mode 1: Chat App Pub/Sub — direct interaction event
-  // =========================================================================
-  if (isChatAppMode) {
-    return handleChatAppEvent(eventData);
-  }
-
-  // =========================================================================
-  // Mode 2: Workspace Events API — CloudEvents format
+  // Mode 1: Workspace Events API — CloudEvents format (preferred)
   // =========================================================================
   if (isWorkspaceEventsMode) {
     return handleWorkspaceEvent(eventData, ceType, pubsubMessage);
+  }
+
+  // =========================================================================
+  // Mode 2: Chat App Pub/Sub — skip MESSAGE events to avoid duplicate replies
+  // (Workspace Events API already handles message events)
+  // =========================================================================
+  if (isChatAppMode) {
+    const eventType = eventData.type || "";
+    if (eventType === "MESSAGE") {
+      console.log("[pubsub/chatapp] Skipping MESSAGE (handled by WorkspaceEvents)");
+      return NextResponse.json({ ok: true });
+    }
+    return handleChatAppEvent(eventData);
   }
 
   // Unknown format
