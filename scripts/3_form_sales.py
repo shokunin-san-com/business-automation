@@ -8,6 +8,8 @@ Pipeline:
 4. Record results to Google Sheets
 """
 
+
+from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path

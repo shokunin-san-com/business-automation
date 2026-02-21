@@ -6,6 +6,8 @@ Uses Google search (via requests) and BeautifulSoup to:
 2. Find contact/inquiry form URLs on their websites
 """
 
+from __future__ import annotations
+
 import re
 import time
 from urllib.parse import urljoin, urlparse

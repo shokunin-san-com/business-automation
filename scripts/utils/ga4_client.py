@@ -4,6 +4,8 @@ Google Analytics 4 Data API wrapper.
 Uses service account authentication to fetch page-level metrics.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 
 import sys

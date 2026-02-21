@@ -4,6 +4,8 @@ Form auto-submitter — fill and submit web contact forms using Playwright.
 Supports dry-run mode (fills form but doesn't submit).
 """
 
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path

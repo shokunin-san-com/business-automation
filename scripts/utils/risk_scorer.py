@@ -13,6 +13,8 @@ Decision thresholds:
   - score > 70: BLOCK (do not send, alert human)
 """
 
+
+from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 

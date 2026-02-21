@@ -5,6 +5,8 @@ Requires LINKEDIN_ACCESS_TOKEN in .env.
 Initial token must be obtained via OAuth 2.0 flow (run this file directly).
 """
 
+from __future__ import annotations
+
 import requests
 
 import sys

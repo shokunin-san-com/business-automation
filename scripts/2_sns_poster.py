@@ -7,9 +7,12 @@ Risk scoring flow:
   score > 70  → BLOCK (alert human)
 """
 
+
+from __future__ import annotations
 import sys
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -44,7 +47,7 @@ def _get_posted_keys() -> set[str]:
 
 def _generate_posts(idea: dict, platform: str, learning_context: str = "") -> list[str]:
     """Generate SNS posts for a business idea and platform."""
-    lp_url = f"{LP_BASE_URL}/lp/{idea['id']}"
+    lp_url = f"{LP_BASE_URL}/lp/{quote(idea['id'], safe='')}"
     template = jinja_env.get_template("sns_prompt.j2")
     prompt = template.render(
         platform=platform,

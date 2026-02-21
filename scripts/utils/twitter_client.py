@@ -1,7 +1,9 @@
 """
 Twitter/X API wrapper using Tweepy.
 """
+from __future__ import annotations
 
+import re
 import tweepy
 
 import sys
@@ -38,9 +40,13 @@ def post_tweet(text: str) -> dict | None:
 
     Text is truncated to 280 characters.
     """
-    if len(text) > 280:
+    # Twitter counts every URL as 23 chars (t.co shortening)
+    url_pattern = re.compile(r'https?://\S+')
+    urls = url_pattern.findall(text)
+    twitter_len = len(url_pattern.sub('', text)) + len(urls) * 23
+    if twitter_len > 280:
+        logger.warning(f"Tweet exceeds 280 Twitter chars ({twitter_len}), truncating")
         text = text[:277] + "..."
-        logger.warning("Tweet text truncated to 280 chars")
 
     client = _get_client()
     try:
