@@ -344,6 +344,16 @@ async function handleWorkspaceEvent(
     return NextResponse.json({ ok: true });
   }
 
+  // Only respond to messages that mention the bot (@BVA System)
+  // argumentText is present when the bot is mentioned (text with mention stripped)
+  // Also check for explicit mention in the raw text
+  const rawText = msg.text || "";
+  const hasMention = !!msg.argumentText || /bva|ボット|bot/i.test(rawText);
+  if (!hasMention) {
+    console.log("[pubsub/workspace] No bot mention, skipping");
+    return NextResponse.json({ ok: true });
+  }
+
   console.log(
     `[pubsub/workspace] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
   );
