@@ -95,17 +95,20 @@ async function buildSystemPrompt(): Promise<string> {
     }
   } catch { /* ignore */ }
 
-  // 4. Current direction notes from settings
-  let ideaDirectionNotes = "";
-  let marketDirectionNotes = "";
+  // 4. Current settings
+  let settingsSummary = "";
   try {
     const settingsRows = await getAllRows("settings");
-    const settingsMap: Record<string, string> = {};
-    for (const r of settingsRows) {
-      settingsMap[r.key] = r.value || "";
-    }
-    ideaDirectionNotes = settingsMap["idea_direction_notes"] || "";
-    marketDirectionNotes = settingsMap["market_direction_notes"] || "";
+    const sm: Record<string, string> = {};
+    for (const r of settingsRows) sm[r.key] = r.value || "";
+
+    const lines: string[] = [];
+    if (sm["target_industries"]) lines.push(`- ターゲット業界: ${sm["target_industries"]}`);
+    if (sm["trend_keywords"]) lines.push(`- トレンドキーワード: ${sm["trend_keywords"]}`);
+    if (sm["exploration_markets"]) lines.push(`- 探索対象市場: ${sm["exploration_markets"]}`);
+    if (sm["idea_direction_notes"]) lines.push(`- 事業案方向性メモ: ${sm["idea_direction_notes"]}`);
+    if (sm["market_direction_notes"]) lines.push(`- 市場探索方向性メモ: ${sm["market_direction_notes"]}`);
+    settingsSummary = lines.join("\n");
   } catch { /* ignore */ }
 
   return `あなたはMarketProbe事業検証自動化システムの運用アドバイザーです。
@@ -113,25 +116,42 @@ async function buildSystemPrompt(): Promise<string> {
 
 ## あなたの役割
 1. パフォーマンスデータに基づく分析・アドバイス提供
-2. 運用者の戦略的指示を理解し、[DIRECTIVE: category] タグで分類
+2. 運用者の戦略的指示を理解し、適切なタグで分類
 3. 過去の学習メモリを参照した文脈のある回答
 
 ## 指示の分類
-運用者が「〜して」「〜に変更して」等の方針や方向性の指示を出した場合、回答の末尾に以下のタグを付けてください：
-[DIRECTIVE: idea_generation] — 事業案生成の方向性に関する指示（どんな事業をやりたいか、避けたいか等）
-[DIRECTIVE: market_exploration] — 市場探索・選定の方向性に関する指示（どんな市場を狙いたいか、条件等）
+運用者が方針・方向性の指示を出した場合、回答の末尾に以下のタグを付けてください：
+
+### DIRECTIVE タグ（学習メモリに保存 + 方向性メモに追記）
+[DIRECTIVE: idea_generation] — 事業案生成の方向性に関する指示
+[DIRECTIVE: market_exploration] — 市場探索・選定の方向性に関する指示
 [DIRECTIVE: lp_optimization] — LP改善に関する指示
 [DIRECTIVE: sns_strategy] — SNS戦略に関する指示
 [DIRECTIVE: form_sales] — フォーム営業に関する指示
 [DIRECTIVE: general] — その他の一般的な指示
 
-★重要: idea_generation と market_exploration の指示は、設定画面の「方向性メモ」に自動追記されます。
-次回のパイプライン実行時にAIプロンプトに直接反映されるため、具体的かつ簡潔にまとめてください。
+### SETTINGS_UPDATE タグ（設定値を直接書き換え）
+運用者がターゲット業界、トレンドキーワード、探索対象市場などの設定値を変更・追加・削除したい場合、
+回答末尾に以下のJSON形式で出力してください（複数同時変更OK）：
+
+[SETTINGS_UPDATE]
+{"target_industries":"新しい値","trend_keywords":"新しい値","exploration_markets":"新しい値"}
+[/SETTINGS_UPDATE]
+
+変更可能な設定キー:
+- target_industries: ターゲット業界（カンマ区切り）
+- trend_keywords: トレンドキーワード（カンマ区切り）
+- exploration_markets: 探索対象市場（カンマ区切り）
+- ideas_per_run: 1回の生成数
+- idea_direction_notes: 事業案方向性メモ（追記ではなく上書き）
+- market_direction_notes: 市場探索方向性メモ（追記ではなく上書き）
+
+★ 現在の設定値を確認した上で、運用者の指示に合わせて適切に更新してください。
+★ 既存の値に追加する場合はカンマで繋げてください。削除する場合は該当項目を除いてください。
 
 ※ 質問や分析依頼にはタグ不要です。明確な方針変更・指示の場合のみ付けてください。
 
-${ideaDirectionNotes ? `## 現在の事業案方向性メモ\n${ideaDirectionNotes}\n` : ""}
-${marketDirectionNotes ? `## 現在の市場探索方向性メモ\n${marketDirectionNotes}\n` : ""}
+${settingsSummary ? `## 現在の設定値\n${settingsSummary}\n` : ""}
 
 ${performanceSummary ? `## 直近のパフォーマンス (7日間)\n${performanceSummary}\n` : "## パフォーマンスデータ\nまだデータがありません。\n"}
 
@@ -201,6 +221,40 @@ function extractDirective(text: string): { category: string; content: string } |
   const content = lines.length > 0 ? lines[lines.length - 1].trim() : beforeTag;
 
   return { category, content };
+}
+
+/**
+ * Extract and apply SETTINGS_UPDATE from AI response.
+ * Format: [SETTINGS_UPDATE]{"key":"value",...}[/SETTINGS_UPDATE]
+ */
+const UPDATABLE_SETTINGS = new Set([
+  "target_industries", "trend_keywords", "exploration_markets",
+  "ideas_per_run", "idea_direction_notes", "market_direction_notes",
+]);
+
+async function applySettingsUpdate(text: string): Promise<string[]> {
+  const match = text.match(/\[SETTINGS_UPDATE\]\s*([\s\S]*?)\s*\[\/SETTINGS_UPDATE\]/);
+  if (!match) return [];
+
+  try {
+    const updates = JSON.parse(match[1].trim()) as Record<string, string>;
+    const applied: string[] = [];
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (!UPDATABLE_SETTINGS.has(key)) {
+        console.warn(`Skipping non-updatable setting: ${key}`);
+        continue;
+      }
+      await updateCell("settings", "key", key, "value", String(value));
+      applied.push(key);
+      console.log(`Settings updated: ${key} = ${String(value).substring(0, 50)}...`);
+    }
+
+    return applied;
+  } catch (err) {
+    console.error("Failed to parse/apply SETTINGS_UPDATE:", err);
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +363,15 @@ async function createClaudeStream(
           controller.enqueue(encoder.encode(`data: ${meta}\n\n`));
         }
 
+        // Check for settings updates
+        const settingsApplied = await applySettingsUpdate(fullText);
+        if (settingsApplied.length > 0) {
+          const meta = JSON.stringify({
+            settings_applied: settingsApplied,
+          });
+          controller.enqueue(encoder.encode(`data: ${meta}\n\n`));
+        }
+
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       } catch (err) {
@@ -359,6 +422,15 @@ async function createGeminiStream(
             directive_saved: true,
             category: directive.category,
             settings_updated: saveResult.settingsUpdated || null,
+          });
+          controller.enqueue(encoder.encode(`data: ${meta}\n\n`));
+        }
+
+        // Check for settings updates
+        const settingsApplied = await applySettingsUpdate(fullText);
+        if (settingsApplied.length > 0) {
+          const meta = JSON.stringify({
+            settings_applied: settingsApplied,
           });
           controller.enqueue(encoder.encode(`data: ${meta}\n\n`));
         }

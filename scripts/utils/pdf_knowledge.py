@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import CREDENTIALS_DIR, CLAUDE_API_KEY, get_logger
+from config import CREDENTIALS_DIR, CLAUDE_API_KEY, GEMINI_API_KEY, get_logger
 from utils.sheets_client import get_all_rows, append_row, find_row_index
 
 logger = get_logger(__name__)
@@ -72,22 +72,58 @@ def upload_pdf_to_gcs(pdf_path: str) -> str:
         raise
 
 
-def extract_knowledge_from_pdf(pdf_path: str) -> dict:
-    """Send PDF to Claude API and extract chapter structure + summaries.
+EXTRACTION_PROMPT = """この書籍/ドキュメントを分析し、以下のJSON形式で出力してください。
+JSON以外のテキストは含めないでください。
 
-    Returns:
-        {
-            "title": "...",
-            "summary": "全体要約 (200-300文字)",
-            "chapters": [
-                {"number": 1, "title": "...", "summary": "..."},
-                ...
-            ]
-        }
-    """
+```json
+{
+  "title": "書籍タイトル",
+  "summary": "全体の要約（300-500文字。主要なフレームワーク、方法論、重要な概念を含める）",
+  "chapters": [
+    {
+      "number": 1,
+      "title": "章タイトル",
+      "summary": "章の要約（100-200文字。具体的なフレームワーク名、手法、キーコンセプトを含める）"
+    }
+  ],
+  "key_frameworks": ["フレームワーク名1", "フレームワーク名2"],
+  "applicable_to": "この書籍の知識が特に有用な事業フェーズや活動（50-100文字）"
+}
+```"""
+
+# Claude API max request size ~30MB base64. Use Gemini for larger files.
+CLAUDE_MAX_FILE_SIZE_MB = 25
+
+
+def _extract_with_gemini(pdf_path: str) -> dict:
+    """Extract knowledge using Gemini API (handles large PDFs via File API)."""
+    import google.generativeai as genai
+
+    genai.configure(api_key=GEMINI_API_KEY)
+
+    file_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
+    logger.info(f"Sending PDF to Gemini for analysis: {Path(pdf_path).name} ({file_size_mb:.1f} MB)")
+
+    # Use Gemini File API for upload (supports large files)
+    uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
+    logger.info(f"Gemini file uploaded: {uploaded_file.name}")
+
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model = genai.GenerativeModel(model_name)
+
+    response = model.generate_content(
+        [uploaded_file, EXTRACTION_PROMPT],
+        generation_config=genai.GenerationConfig(max_output_tokens=8192),
+    )
+
+    raw = response.text.strip()
+    return _parse_ai_response(raw)
+
+
+def _extract_with_claude(pdf_path: str) -> dict:
+    """Extract knowledge using Claude API (for smaller PDFs)."""
     import anthropic
 
-    # Read PDF and encode as base64
     with open(pdf_path, "rb") as f:
         pdf_bytes = f.read()
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
@@ -111,42 +147,68 @@ def extract_knowledge_from_pdf(pdf_path: str) -> dict:
                             "data": pdf_b64,
                         },
                     },
-                    {
-                        "type": "text",
-                        "text": """この書籍/ドキュメントを分析し、以下のJSON形式で出力してください。
-JSON以外のテキストは含めないでください。
-
-```json
-{
-  "title": "書籍タイトル",
-  "summary": "全体の要約（300-500文字。主要なフレームワーク、方法論、重要な概念を含める）",
-  "chapters": [
-    {
-      "number": 1,
-      "title": "章タイトル",
-      "summary": "章の要約（100-200文字。具体的なフレームワーク名、手法、キーコンセプトを含める）"
-    }
-  ],
-  "key_frameworks": ["フレームワーク名1", "フレームワーク名2"],
-  "applicable_to": "この書籍の知識が特に有用な事業フェーズや活動（50-100文字）"
-}
-```""",
-                    },
+                    {"type": "text", "text": EXTRACTION_PROMPT},
                 ],
             }
         ],
     )
 
     raw = response.content[0].text.strip()
-    # Strip markdown code fences if present
+    return _parse_ai_response(raw)
+
+
+def _parse_ai_response(raw: str) -> dict:
+    """Parse JSON from AI response, stripping code fences if present."""
     if raw.startswith("```"):
         first_newline = raw.index("\n")
         last_fence = raw.rfind("```")
         raw = raw[first_newline + 1:last_fence].strip()
-
     result = json.loads(raw)
-    logger.info(f"Extracted {len(result.get('chapters', []))} chapters from PDF")
+    logger.info(f"Extracted {len(result.get('chapters', []))} chapters")
     return result
+
+
+def extract_knowledge_from_pdf(pdf_path: str) -> dict:
+    """Extract chapter structure + summaries from PDF.
+
+    Uses Gemini for large files (>25MB) or when Gemini key is available,
+    falls back to Claude for smaller files.
+
+    Returns:
+        {
+            "title": "...",
+            "summary": "全体要約 (300-500文字)",
+            "chapters": [{"number": 1, "title": "...", "summary": "..."}, ...],
+            "key_frameworks": [...],
+            "applicable_to": "..."
+        }
+    """
+    file_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
+
+    # Large files: must use Gemini (Claude has ~30MB request limit)
+    if file_size_mb > CLAUDE_MAX_FILE_SIZE_MB:
+        if GEMINI_API_KEY:
+            return _extract_with_gemini(pdf_path)
+        else:
+            raise ValueError(
+                f"PDF is {file_size_mb:.1f}MB (Claude limit: {CLAUDE_MAX_FILE_SIZE_MB}MB). "
+                f"Set GEMINI_API_KEY to process large PDFs."
+            )
+
+    # Normal files: try Gemini first (faster, larger context), fallback to Claude
+    if GEMINI_API_KEY:
+        try:
+            return _extract_with_gemini(pdf_path)
+        except Exception as e:
+            logger.warning(f"Gemini extraction failed, falling back to Claude: {e}")
+            if CLAUDE_API_KEY:
+                return _extract_with_claude(pdf_path)
+            raise
+
+    if CLAUDE_API_KEY:
+        return _extract_with_claude(pdf_path)
+
+    raise RuntimeError("No AI API key configured (GEMINI_API_KEY or CLAUDE_API_KEY)")
 
 
 def upload_and_index(pdf_path: str, title: str | None = None) -> dict:
