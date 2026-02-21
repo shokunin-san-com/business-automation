@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import AppShell from "../../components/AppShell";
 
 interface BusinessIdea {
@@ -38,10 +38,146 @@ const STATUS_STYLES: Record<string, { dot: string; text: string; label: string }
   archived: { dot: "bg-white/20", text: "text-white/30", label: "アーカイブ" },
 };
 
-function IdeaCard({ idea }: { idea: BusinessIdea }) {
+/* ------------------------------------------------------------------ */
+/*  Detail Modal                                                       */
+/* ------------------------------------------------------------------ */
+function DetailModal({
+  idea,
+  onClose,
+  onAction,
+  acting,
+}: {
+  idea: BusinessIdea;
+  onClose: () => void;
+  onAction: (id: string, action: string) => void;
+  acting: boolean;
+}) {
   const st = STATUS_STYLES[idea.status] || STATUS_STYLES.draft;
   return (
-    <div className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5 transition-all hover:border-white/[.12] hover:bg-white/[.04]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="mx-4 w-full max-w-lg rounded-2xl border border-white/[.08] bg-[#12121a] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-base font-semibold leading-snug">{idea.name}</h2>
+          <button
+            onClick={onClose}
+            className="shrink-0 rounded-lg p-1.5 text-white/30 transition-colors hover:bg-white/5 hover:text-white/60"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="mt-3 flex items-center gap-1.5">
+          <div className={`h-2 w-2 rounded-full ${st.dot}`} />
+          <span className={`text-xs ${st.text}`}>{st.label}</span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {idea.category && (
+            <span className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-white/50">
+              {idea.category}
+            </span>
+          )}
+          {idea.target_audience && (
+            <span className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-white/50">
+              {idea.target_audience}
+            </span>
+          )}
+        </div>
+
+        {idea.description && (
+          <div className="mt-4 max-h-60 overflow-y-auto rounded-xl bg-white/[.03] p-4">
+            <p className="text-[11px] font-medium text-white/30 mb-2">概要</p>
+            <p className="text-xs leading-relaxed text-white/60 whitespace-pre-wrap">
+              {idea.description}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center gap-4 text-[10px] text-white/20">
+          {idea.created_at && <span>作成日: {formatDate(idea.created_at)}</span>}
+          <span>ID: {idea.id}</span>
+        </div>
+
+        <div className="mt-6 flex items-center gap-2 border-t border-white/[.06] pt-4">
+          {idea.has_lp && (
+            <a
+              href={`/lp/${idea.id}`}
+              className="rounded-lg border border-blue-500/20 bg-blue-600/20 px-3 py-1.5 text-[11px] font-medium text-blue-400 no-underline transition-colors hover:bg-blue-600/30"
+            >
+              LP を見る
+            </a>
+          )}
+          <div className="flex-1" />
+          {idea.status === "draft" && (
+            <>
+              <button
+                disabled={acting}
+                onClick={() => onAction(idea.id, "approve")}
+                className="rounded-lg bg-emerald-600/20 border border-emerald-500/20 px-3 py-1.5 text-[11px] font-medium text-emerald-400 transition-colors hover:bg-emerald-600/30 disabled:opacity-40"
+              >
+                {acting ? "..." : "承認する"}
+              </button>
+              <button
+                disabled={acting}
+                onClick={() => onAction(idea.id, "reject")}
+                className="rounded-lg bg-red-600/20 border border-red-500/20 px-3 py-1.5 text-[11px] font-medium text-red-400 transition-colors hover:bg-red-600/30 disabled:opacity-40"
+              >
+                {acting ? "..." : "却下する"}
+              </button>
+            </>
+          )}
+          {idea.status === "active" && (
+            <button
+              disabled={acting}
+              onClick={() => onAction(idea.id, "archive")}
+              className="rounded-lg bg-white/5 border border-white/10 px-3 py-1.5 text-[11px] font-medium text-white/40 transition-colors hover:bg-white/10 disabled:opacity-40"
+            >
+              {acting ? "..." : "アーカイブ"}
+            </button>
+          )}
+          {idea.status === "archived" && (
+            <button
+              disabled={acting}
+              onClick={() => onAction(idea.id, "restore")}
+              className="rounded-lg bg-emerald-600/20 border border-emerald-500/20 px-3 py-1.5 text-[11px] font-medium text-emerald-400 transition-colors hover:bg-emerald-600/30 disabled:opacity-40"
+            >
+              {acting ? "..." : "復元する"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Idea Card                                                          */
+/* ------------------------------------------------------------------ */
+function IdeaCard({
+  idea,
+  onOpen,
+  onAction,
+  acting,
+}: {
+  idea: BusinessIdea;
+  onOpen: (idea: BusinessIdea) => void;
+  onAction: (id: string, action: string) => void;
+  acting: boolean;
+}) {
+  const st = STATUS_STYLES[idea.status] || STATUS_STYLES.draft;
+  return (
+    <div
+      className="cursor-pointer rounded-2xl border border-white/[.06] bg-white/[.02] p-5 transition-all hover:border-white/[.12] hover:bg-white/[.04]"
+      onClick={() => onOpen(idea)}
+    >
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-sm font-medium leading-snug">{idea.name}</h3>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -69,17 +205,53 @@ function IdeaCard({ idea }: { idea: BusinessIdea }) {
         </p>
       )}
 
-      <div className="mt-4 flex items-center justify-between">
-        {idea.has_lp ? (
-          <a
-            href={`/lp/${idea.id}`}
-            className="rounded-lg border border-blue-500/20 bg-blue-600/20 px-3 py-1.5 text-[11px] font-medium text-blue-400 no-underline transition-colors hover:bg-blue-600/30"
-          >
-            LP を見る
-          </a>
-        ) : (
-          <span className="text-[11px] text-white/15">LP未生成</span>
-        )}
+      <div className="mt-4 flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2">
+          {idea.has_lp && (
+            <a
+              href={`/lp/${idea.id}`}
+              className="rounded-lg border border-blue-500/20 bg-blue-600/20 px-2.5 py-1 text-[10px] font-medium text-blue-400 no-underline transition-colors hover:bg-blue-600/30"
+            >
+              LP
+            </a>
+          )}
+          {idea.status === "draft" && (
+            <>
+              <button
+                disabled={acting}
+                onClick={() => onAction(idea.id, "approve")}
+                className="rounded-lg bg-emerald-600/20 border border-emerald-500/20 px-2.5 py-1 text-[10px] font-medium text-emerald-400 transition-colors hover:bg-emerald-600/30 disabled:opacity-40"
+              >
+                承認
+              </button>
+              <button
+                disabled={acting}
+                onClick={() => onAction(idea.id, "reject")}
+                className="rounded-lg bg-red-600/20 border border-red-500/20 px-2.5 py-1 text-[10px] font-medium text-red-400 transition-colors hover:bg-red-600/30 disabled:opacity-40"
+              >
+                却下
+              </button>
+            </>
+          )}
+          {idea.status === "active" && (
+            <button
+              disabled={acting}
+              onClick={() => onAction(idea.id, "archive")}
+              className="rounded-lg bg-white/5 border border-white/10 px-2.5 py-1 text-[10px] font-medium text-white/30 transition-colors hover:bg-white/10 disabled:opacity-40"
+            >
+              アーカイブ
+            </button>
+          )}
+          {idea.status === "archived" && (
+            <button
+              disabled={acting}
+              onClick={() => onAction(idea.id, "restore")}
+              className="rounded-lg bg-emerald-600/20 border border-emerald-500/20 px-2.5 py-1 text-[10px] font-medium text-emerald-400 transition-colors hover:bg-emerald-600/30 disabled:opacity-40"
+            >
+              復元
+            </button>
+          )}
+        </div>
         {idea.created_at && (
           <span className="text-[10px] text-white/20">{formatDate(idea.created_at)}</span>
         )}
@@ -88,6 +260,9 @@ function IdeaCard({ idea }: { idea: BusinessIdea }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Summary Card                                                       */
+/* ------------------------------------------------------------------ */
 function SummaryCard({ label, count, accent }: { label: string; count: number; accent: string }) {
   const colors: Record<string, string> = {
     emerald: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/20",
@@ -107,12 +282,17 @@ function SummaryCard({ label, count, accent }: { label: string; count: number; a
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Main Page                                                          */
+/* ------------------------------------------------------------------ */
 export default function IdeasPage() {
   const [data, setData] = useState<IdeasData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
+  const [selectedIdea, setSelectedIdea] = useState<BusinessIdea | null>(null);
+  const [acting, setActing] = useState(false);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     fetch("/api/ideas")
       .then((r) => r.json())
       .then(setData)
@@ -120,10 +300,36 @@ export default function IdeasPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleAction = useCallback(
+    async (ideaId: string, action: string) => {
+      setActing(true);
+      try {
+        const apiAction = action === "approve" || action === "restore" ? "approve" : "reject";
+        const res = await fetch("/api/slack/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idea_id: ideaId, action: apiAction, user: "ideas_page" }),
+        });
+        if (res.ok) {
+          setSelectedIdea(null);
+          fetchData();
+        }
+      } catch {
+        // best effort
+      } finally {
+        setActing(false);
+      }
+    },
+    [fetchData]
+  );
+
   return (
     <AppShell>
       <div className="mx-auto max-w-6xl px-6 py-8">
-        {/* Header */}
         <div className="mb-8">
           <h1 className="text-lg font-semibold">事業案一覧</h1>
           <p className="mt-1 text-xs text-white/30">
@@ -145,30 +351,12 @@ export default function IdeasPage() {
           </div>
         ) : (
           <>
-            {/* Summary Cards */}
             <div className="mb-8 grid gap-3 sm:grid-cols-3">
               <SummaryCard label="アクティブ" count={data.active.length} accent="emerald" />
               <SummaryCard label="承認待ち" count={data.draft.length} accent="amber" />
               <SummaryCard label="アーカイブ" count={data.archived.length} accent="gray" />
             </div>
 
-            {/* Active Section */}
-            {data.active.length > 0 && (
-              <section className="mb-8">
-                <h2 className="mb-4 flex items-center gap-2 text-sm font-medium">
-                  <div className="h-2 w-2 rounded-full bg-emerald-400" />
-                  アクティブな事業案
-                  <span className="text-[10px] text-white/30">({data.active.length})</span>
-                </h2>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {data.active.map((idea) => (
-                    <IdeaCard key={idea.id} idea={idea} />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Draft Section */}
             {data.draft.length > 0 && (
               <section className="mb-8">
                 <h2 className="mb-4 flex items-center gap-2 text-sm font-medium">
@@ -178,13 +366,27 @@ export default function IdeasPage() {
                 </h2>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {data.draft.map((idea) => (
-                    <IdeaCard key={idea.id} idea={idea} />
+                    <IdeaCard key={idea.id} idea={idea} onOpen={setSelectedIdea} onAction={handleAction} acting={acting} />
                   ))}
                 </div>
               </section>
             )}
 
-            {/* Archived Section */}
+            {data.active.length > 0 && (
+              <section className="mb-8">
+                <h2 className="mb-4 flex items-center gap-2 text-sm font-medium">
+                  <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                  アクティブな事業案
+                  <span className="text-[10px] text-white/30">({data.active.length})</span>
+                </h2>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {data.active.map((idea) => (
+                    <IdeaCard key={idea.id} idea={idea} onOpen={setSelectedIdea} onAction={handleAction} acting={acting} />
+                  ))}
+                </div>
+              </section>
+            )}
+
             {data.archived.length > 0 && (
               <section className="mb-8">
                 <button
@@ -206,7 +408,7 @@ export default function IdeasPage() {
                 {showArchived && (
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {data.archived.map((idea) => (
-                      <IdeaCard key={idea.id} idea={idea} />
+                      <IdeaCard key={idea.id} idea={idea} onOpen={setSelectedIdea} onAction={handleAction} acting={acting} />
                     ))}
                   </div>
                 )}
@@ -215,6 +417,15 @@ export default function IdeasPage() {
           </>
         )}
       </div>
+
+      {selectedIdea && (
+        <DetailModal
+          idea={selectedIdea}
+          onClose={() => setSelectedIdea(null)}
+          onAction={handleAction}
+          acting={acting}
+        />
+      )}
     </AppShell>
   );
 }
