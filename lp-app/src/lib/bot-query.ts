@@ -3,6 +3,7 @@
  */
 import crypto from "crypto";
 import { getAllRows, appendRows, ensureSheetExists } from "@/lib/sheets";
+import { getAccessToken, GCP_PROJECT, GCP_REGION, JOB_MAP } from "@/lib/gcp-auth";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const LEARNING_HEADERS = [
@@ -45,6 +46,101 @@ export function isQuery(text: string): boolean {
   if (/パイプライン|ステータス|最新|直近|今日|今週|結果/.test(lower)) return true;
   if (/今後|改善|課題|傾向|推移|比較/.test(lower)) return true;
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Execution command detection & handler
+// ---------------------------------------------------------------------------
+
+/** Map of keyword patterns to script IDs for execution commands */
+const EXEC_PATTERNS: { pattern: RegExp; scriptId: string; label: string }[] = [
+  { pattern: /市場(調査|リサーチ).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "A_market_research", label: "市場調査" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*市場(調査|リサーチ)/, scriptId: "A_market_research", label: "市場調査" },
+  { pattern: /市場選定.*(実行|して|やって|走らせ|開始|回して)/, scriptId: "B_market_selection", label: "市場選定" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*市場選定/, scriptId: "B_market_selection", label: "市場選定" },
+  { pattern: /競合(調査|分析).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "C_competitor_analysis", label: "競合調査" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*競合(調査|分析)/, scriptId: "C_competitor_analysis", label: "競合調査" },
+  { pattern: /事業案.*(生成|作|実行|して|やって|走らせ|開始|回して)/, scriptId: "0_idea_generator", label: "事業案生成" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*事業案/, scriptId: "0_idea_generator", label: "事業案生成" },
+  { pattern: /lp.*(生成|作|実行|して|やって|走らせ|開始|回して)/, scriptId: "1_lp_generator", label: "LP生成" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*lp/, scriptId: "1_lp_generator", label: "LP生成" },
+  { pattern: /sns.*(投稿|実行|して|やって|走らせ|開始|回して)/, scriptId: "2_sns_poster", label: "SNS投稿" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*sns/, scriptId: "2_sns_poster", label: "SNS投稿" },
+  { pattern: /フォーム(営業|送信).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "3_form_sales", label: "フォーム営業" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*フォーム(営業|送信)/, scriptId: "3_form_sales", label: "フォーム営業" },
+  { pattern: /(分析|アナリティクス).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "4_analytics_reporter", label: "分析・改善" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*(分析|アナリティクス)/, scriptId: "4_analytics_reporter", label: "分析・改善" },
+  { pattern: /(slack|レポート).*(実行|して|やって|走らせ|開始|回して|送|配信)/, scriptId: "5_slack_reporter", label: "Slackレポート" },
+  { pattern: /広告(監視|モニター).*(実行|して|やって|走らせ|開始|回して)/, scriptId: "6_ads_monitor", label: "広告監視" },
+  { pattern: /学習.*(実行|して|やって|走らせ|開始|回して|回)/, scriptId: "7_learning_engine", label: "学習エンジン" },
+  { pattern: /(実行|して|やって|走らせ|開始|回して).*学習/, scriptId: "7_learning_engine", label: "学習エンジン" },
+];
+
+/** Detect if the message is an execution command */
+export function isExecutionCommand(text: string): { scriptId: string; label: string } | null {
+  const lower = text.toLowerCase();
+  for (const { pattern, scriptId, label } of EXEC_PATTERNS) {
+    if (pattern.test(lower)) return { scriptId, label };
+  }
+  return null;
+}
+
+/** Execute a Cloud Run Job and return a status message */
+export async function handleExecutionCommand(
+  scriptId: string,
+  label: string,
+  triggeredBy: string,
+): Promise<string> {
+  const entry = JOB_MAP[scriptId];
+  if (!entry) {
+    return `⚠️ 「${label}」に対応するジョブが見つかりません。`;
+  }
+
+  try {
+    const token = await getAccessToken();
+    const url = `https://${GCP_REGION}-run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${entry.jobId}:run`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[bot-query] Cloud Run execute error for ${entry.jobId}:`, errText);
+      return `⚠️ 「${label}」の実行に失敗しました（${res.status}）。ダッシュボードから再試行してください。`;
+    }
+
+    const result = await res.json();
+    const executionName = result.metadata?.name || result.name || "";
+
+    // Log execution
+    try {
+      await ensureSheetExists("execution_logs", [
+        "timestamp", "job_name", "trigger", "status", "detail", "executed_by",
+      ]);
+      await appendRows("execution_logs", [[
+        new Date().toISOString(),
+        scriptId,
+        "chat",
+        "triggered",
+        `Execution: ${executionName}`,
+        triggeredBy,
+      ]]);
+    } catch { /* best-effort */ }
+
+    return (
+      `🚀 *${label}* を実行開始しました！\n` +
+      `> ジョブ: \`${entry.jobId}\`\n` +
+      `完了までしばらくお待ちください。結果はダッシュボードで確認できます。`
+    );
+  } catch (err) {
+    console.error(`[bot-query] Error executing ${scriptId}:`, err);
+    return `⚠️ 「${label}」の実行中にエラーが発生しました。`;
+  }
 }
 
 // ---------------------------------------------------------------------------

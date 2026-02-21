@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getChatAccessToken, getWorkspaceEventsToken } from "@/lib/gcp-auth";
-import { isQuery, handleDataQuery, saveDirective } from "@/lib/bot-query";
+import { isQuery, isExecutionCommand, handleDataQuery, handleExecutionCommand, saveDirective } from "@/lib/bot-query";
 
 /**
  * POST /api/gchat/pubsub
@@ -250,9 +250,12 @@ async function handleChatAppEvent(event: ChatAppEvent) {
       `[pubsub/chatapp] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
     );
 
-    // Process the query/directive
+    // Process: execution command > query > directive
     let reply: string;
-    if (isQuery(messageText)) {
+    const execCmd = isExecutionCommand(messageText);
+    if (execCmd) {
+      reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
+    } else if (isQuery(messageText)) {
       reply = await handleDataQuery(messageText);
     } else {
       reply = await saveDirective(messageText, "gchat", senderName, spaceName);
@@ -345,9 +348,12 @@ async function handleWorkspaceEvent(
     `[pubsub/workspace] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
   );
 
-  // Process the query/directive
+  // Process: execution command > query > directive
   let reply: string;
-  if (isQuery(messageText)) {
+  const execCmd = isExecutionCommand(messageText);
+  if (execCmd) {
+    reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
+  } else if (isQuery(messageText)) {
     reply = await handleDataQuery(messageText);
   } else {
     reply = await saveDirective(messageText, "gchat", senderName, spaceName);
