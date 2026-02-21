@@ -235,6 +235,35 @@ def find_row_index(sheet_name: str, column_name: str, value: str) -> int | None:
     return None
 
 
+def get_sheet_url(sheet_name: str) -> str:
+    """Return the direct URL for a specific sheet tab.
+
+    Format: https://docs.google.com/spreadsheets/d/{ID}/edit#gid={GID}
+    Returns empty string if sheet not found.
+    """
+    try:
+        ss = get_spreadsheet()
+        ws = ss.worksheet(sheet_name)
+        return f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/edit#gid={ws.id}"
+    except Exception as e:
+        logger.warning(f"Failed to get URL for sheet '{sheet_name}': {e}")
+        return ""
+
+
+def get_sheet_urls(sheet_names: list[str] | None = None) -> dict[str, str]:
+    """Return a dict of {sheet_name: url} for the given sheets (or all sheets).
+
+    Fetches all worksheet metadata in a single API call for efficiency.
+    """
+    ss = get_spreadsheet()
+    urls: dict[str, str] = {}
+    base = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/edit#gid="
+    for ws in ss.worksheets():
+        if sheet_names is None or ws.title in sheet_names:
+            urls[ws.title] = f"{base}{ws.id}"
+    return urls
+
+
 def ensure_sheet_exists(
     sheet_name: str, headers: list[str]
 ) -> gspread.Worksheet:

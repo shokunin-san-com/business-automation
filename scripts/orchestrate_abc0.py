@@ -32,6 +32,7 @@ from utils.sheets_client import (
     update_cell,
     get_worksheet,
     ensure_sheet_exists,
+    get_sheet_urls,
 )
 from utils.slack_notifier import send_message as notify
 from utils.status_writer import update_status
@@ -812,6 +813,20 @@ def _append_direction_notes(reflection: dict, settings: dict):
 # =========================================================================
 # Notification
 # =========================================================================
+# Step name → relevant sheet names mapping
+STEP_SHEET_MAP: dict[str, list[str]] = {
+    "Step A": ["market_research"],
+    "Step P": ["knowledge_base"],
+    "Step B": ["market_selection"],
+    "自動承認": ["market_selection"],
+    "Step C": ["competitor_analysis"],
+    "Step 0": ["business_ideas"],
+    "Step U": ["business_ideas"],
+    "Step E": ["business_ideas"],
+    "Step I": [],  # interview scripts are saved as files, not sheets
+}
+
+
 def send_pipeline_report(
     steps: list[dict],
     auto_approved: list,
@@ -819,6 +834,22 @@ def send_pipeline_report(
     total_duration: str,
 ):
     """Send summary notification to Slack/Google Chat."""
+
+    # Collect all relevant sheet names from steps, then fetch URLs in one call
+    all_sheet_names = set()
+    for step in steps:
+        step_key = step["name"].split(":")[0]
+        for sheet_name in STEP_SHEET_MAP.get(step_key, []):
+            all_sheet_names.add(sheet_name)
+    # Always include settings for direction_notes link
+    all_sheet_names.add("settings")
+
+    try:
+        sheet_urls = get_sheet_urls(list(all_sheet_names))
+    except Exception as e:
+        logger.warning(f"Failed to get sheet URLs: {e}")
+        sheet_urls = {}
+
     lines = [
         "🤖 *ABC0 自律型パイプライン完了レポート*",
         f"⏱️ 所要時間: {total_duration}",
@@ -828,10 +859,21 @@ def send_pipeline_report(
 
     for step in steps:
         count_str = f" ({step.get('count', 0)}件)" if step.get("count") else ""
-        lines.append(f"  {step['status']} {step['name']}{count_str}")
+        step_key = step["name"].split(":")[0]
+        # Build sheet link(s) for this step
+        relevant_sheets = STEP_SHEET_MAP.get(step_key, [])
+        link_parts = []
+        for sn in relevant_sheets:
+            url = sheet_urls.get(sn, "")
+            if url:
+                link_parts.append(f"<{url}|📊{sn}>")
+        link_str = f"  → {' '.join(link_parts)}" if link_parts else ""
+        lines.append(f"  {step['status']} {step['name']}{count_str}{link_str}")
 
     if auto_approved:
-        lines.append("\n*自動承認市場:*")
+        ms_url = sheet_urls.get("market_selection", "")
+        ms_link = f" <{ms_url}|📊シートを開く>" if ms_url else ""
+        lines.append(f"\n*自動承認市場:*{ms_link}")
         for m in auto_approved:
             lines.append(f"  🎯 {m.get('market_name', '')} (score: {m.get('total_score', '')})")
 
@@ -859,6 +901,11 @@ def send_pipeline_report(
             lines.append("\n*次回アクション:*")
             for a in next_actions[:3]:
                 lines.append(f"  📋 {a}")
+
+    # Footer with direct links to key sheets
+    settings_url = sheet_urls.get("settings", "")
+    if settings_url:
+        lines.append(f"\n📋 <{settings_url}|設定シート>")
 
     notify("\n".join(lines))
 
@@ -1003,9 +1050,24 @@ def _abort_pipeline(steps: list, start_time: float):
     elapsed = time.time() - start_time
     total_duration = f"{int(elapsed // 60)}分{int(elapsed % 60)}秒"
 
+    # Get sheet URLs for failed steps
+    try:
+        all_sheet_names = set()
+        for s in steps:
+            step_key = s["name"].split(":")[0]
+            for sn in STEP_SHEET_MAP.get(step_key, []):
+                all_sheet_names.add(sn)
+        sheet_urls = get_sheet_urls(list(all_sheet_names)) if all_sheet_names else {}
+    except Exception:
+        sheet_urls = {}
+
     lines = ["🚨 *ABC0パイプライン停止*", f"⏱️ {total_duration}", ""]
     for s in steps:
-        lines.append(f"  {s['status']} {s['name']}")
+        step_key = s["name"].split(":")[0]
+        relevant = STEP_SHEET_MAP.get(step_key, [])
+        link_parts = [f"<{sheet_urls[sn]}|📊{sn}>" for sn in relevant if sn in sheet_urls]
+        link_str = f"  → {' '.join(link_parts)}" if link_parts else ""
+        lines.append(f"  {s['status']} {s['name']}{link_str}")
         if s.get("errors"):
             for e in s["errors"][:3]:
                 lines.append(f"    → {e}")

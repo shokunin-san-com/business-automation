@@ -11,7 +11,7 @@ from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import GOOGLE_SHEETS_ID, get_logger
-from utils.sheets_client import get_all_rows, get_rows_by_status
+from utils.sheets_client import get_all_rows, get_rows_by_status, get_sheet_urls
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.learning_engine import detect_trends, get_learning_context
@@ -162,13 +162,26 @@ def build_report() -> str:
     form_counts = _count_daily_form_submissions()
     top_suggestions = _get_top_suggestions()
 
+    # Get sheet URLs for linking
+    try:
+        sheet_urls = get_sheet_urls([
+            "business_ideas", "analytics", "sns_posts",
+            "form_sales_targets", "improvement_suggestions",
+            "market_research", "market_selection", "competitor_analysis",
+        ])
+    except Exception:
+        sheet_urls = {}
+
+    bi_link = f" <{sheet_urls['business_ideas']}|📊シート>" if "business_ideas" in sheet_urls else ""
+    analytics_link = f" <{sheet_urls['analytics']}|📊シート>" if "analytics" in sheet_urls else ""
+
     lines = [
         ":chart_with_upwards_trend: *日次レポート*",
         f"対象日: {yesterday}",
         "",
-        f":bulb: *事業案*: {len(active_ideas)}件 active / {len(draft_ideas)}件 draft",
+        f":bulb: *事業案*: {len(active_ideas)}件 active / {len(draft_ideas)}件 draft{bi_link}",
         "",
-        "*--- LP パフォーマンス（前日）---*",
+        f"*--- LP パフォーマンス（前日）---*{analytics_link}",
     ]
 
     if not analytics:
@@ -189,11 +202,14 @@ def build_report() -> str:
                 f"CVR {m['conversions']} / 直帰率 {m['bounce_rate']}%"
             )
 
+    sns_link = f" <{sheet_urls['sns_posts']}|📊>" if "sns_posts" in sheet_urls else ""
+    form_link = f" <{sheet_urls['form_sales_targets']}|📊>" if "form_sales_targets" in sheet_urls else ""
+
     lines.extend([
         "",
         "*--- 前日の活動 ---*",
-        f":mega: SNS投稿: {sum(sns_counts.values())}件",
-        f":envelope: フォーム営業: {sum(form_counts.values())}件",
+        f":mega: SNS投稿: {sum(sns_counts.values())}件{sns_link}",
+        f":envelope: フォーム営業: {sum(form_counts.values())}件{form_link}",
     ])
 
     # Trend analysis section
@@ -232,6 +248,14 @@ def build_report() -> str:
                 lines.append(f"\n:bulb: {budget['summary']}")
     except Exception as e:
         logger.warning(f"Budget allocation failed: {e}")
+
+    # Market exploration links if data exists
+    mr_link = f"<{sheet_urls['market_research']}|市場調査>" if "market_research" in sheet_urls else ""
+    ms_link = f"<{sheet_urls['market_selection']}|市場選定>" if "market_selection" in sheet_urls else ""
+    ca_link = f"<{sheet_urls['competitor_analysis']}|競合分析>" if "competitor_analysis" in sheet_urls else ""
+    exploration_links = " / ".join(lnk for lnk in [mr_link, ms_link, ca_link] if lnk)
+    if exploration_links:
+        lines.append(f"\n📊 *スプレッドシート:* {exploration_links}")
 
     lines.extend(["", f"<{dashboard_url}|ダッシュボードで詳細を確認>"])
 

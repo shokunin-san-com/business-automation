@@ -7,5 +7,11 @@
     "app/api/knowledge/chat/route.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/gchat/renew",
+      "schedule": "0 */3 * * *"
+    }
+  ]
 }

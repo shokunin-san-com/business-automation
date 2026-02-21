@@ -2,7 +2,7 @@
  * Shared bot query/directive logic — used by Slack and Google Chat handlers.
  */
 import crypto from "crypto";
-import { getAllRows, appendRows, ensureSheetExists, updateCell } from "@/lib/sheets";
+import { getAllRows, appendRows, ensureSheetExists, updateCell, getSheetUrls } from "@/lib/sheets";
 import { getAccessToken, GCP_PROJECT, GCP_REGION, JOB_MAP } from "@/lib/gcp-auth";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Anthropic from "@anthropic-ai/sdk";
@@ -351,6 +351,20 @@ async function gatherDataContext(lower: string): Promise<string> {
         }
       }
     }
+
+    // Sheet URLs — always include so AI can link to relevant sheets
+    const sheetUrls = await getSheetUrls([
+      "business_ideas", "market_research", "market_selection",
+      "competitor_analysis", "analytics", "settings",
+      "pipeline_status", "sns_posts", "knowledge_base",
+    ]).catch(() => ({}));
+
+    if (Object.keys(sheetUrls).length > 0) {
+      parts.push(`【シートリンク】`);
+      for (const [name, url] of Object.entries(sheetUrls)) {
+        parts.push(`  ${name}: ${url}`);
+      }
+    }
   } catch (err) {
     console.error("[bot-query] Error gathering data:", err);
   }
@@ -463,6 +477,13 @@ target_industries(ターゲット業界), trend_keywords(トレンドKW), explor
 - スプレッドシートの行の削除・ステータスの直接書き換え（設定シート以外）
 - 外部URLの取得やスクレイピング
 - できないことを「やりました」と嘘の報告すること
+
+# スプレッドシートリンク
+各シートのデータを参照・説明する際は、該当シートへの直接リンクを回答に含めてください。
+リンクは実績データ内の【シートリンク】セクションから取得できます。Slack/Google Chat形式: <URL|表示テキスト>
+例: 「市場調査結果は <https://docs.google.com/.../edit#gid=123|📊market_research> で確認できます」
+
+パイプライン実行後の通知には各ステップの関連シートへのリンクが自動付与されます。
 
 # 回答スタイル
 - **自然な日本語で対話**する。箇条書きの羅列だけでなく、考察や意見を交えて回答

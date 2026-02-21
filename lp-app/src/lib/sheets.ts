@@ -173,6 +173,34 @@ export async function appendRows(
 }
 
 /**
+ * Get direct URLs for specific sheet tabs (or all if sheetNames is omitted).
+ * Returns { sheetName: url } map.
+ */
+export async function getSheetUrls(
+  sheetNames?: string[],
+): Promise<Record<string, string>> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties(title,sheetId)",
+  });
+
+  const base = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=`;
+  const urls: Record<string, string> = {};
+
+  for (const s of meta.data.sheets || []) {
+    const title = s.properties?.title || "";
+    const gid = s.properties?.sheetId ?? 0;
+    if (!sheetNames || sheetNames.includes(title)) {
+      urls[title] = `${base}${gid}`;
+    }
+  }
+  return urls;
+}
+
+/**
  * Ensure a sheet (tab) exists within the spreadsheet. If not, create it with headers.
  */
 export async function ensureSheetExists(
