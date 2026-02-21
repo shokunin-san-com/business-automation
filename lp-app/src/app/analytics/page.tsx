@@ -45,8 +45,8 @@ export default function AnalyticsPage() {
       <main className="mx-auto max-w-6xl space-y-6 p-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold">Analytics Overview</h2>
-            <p className="mt-0.5 text-xs text-white/40">GA4 data collected by the analytics pipeline</p>
+            <h2 className="text-lg font-semibold">アナリティクス概要</h2>
+            <p className="mt-0.5 text-xs text-white/40">分析パイプラインが収集したGA4データ・AI改善提案</p>
           </div>
         </div>
 
@@ -54,30 +54,31 @@ export default function AnalyticsPage() {
           <div className="flex h-40 items-center justify-center">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-blue-500" />
           </div>
-        ) : !data || data.entries.length === 0 ? (
+        ) : !data || (data.entries.length === 0 && data.suggestions.length === 0) ? (
           <EmptyState />
         ) : (
           <>
             {/* Summary Cards */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <StatCard label="Pageviews" value={data.summary.totalPageviews.toLocaleString()} color="blue" />
-              <StatCard label="Sessions" value={data.summary.totalSessions.toLocaleString()} color="violet" />
-              <StatCard label="Conversions" value={data.summary.totalConversions.toLocaleString()} color="emerald" />
-              <StatCard label="Bounce Rate" value={`${data.summary.avgBounceRate.toFixed(1)}%`} color="orange" />
+              <StatCard label="ページビュー" value={data.summary.totalPageviews.toLocaleString()} color="blue" />
+              <StatCard label="セッション" value={data.summary.totalSessions.toLocaleString()} color="violet" />
+              <StatCard label="コンバージョン" value={data.summary.totalConversions.toLocaleString()} color="emerald" />
+              <StatCard label="直帰率" value={`${data.summary.avgBounceRate.toFixed(1)}%`} color="orange" />
             </div>
 
             {/* Data Table */}
+            {data.entries.length > 0 && (
             <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5 overflow-x-auto">
-              <h3 className="mb-4 text-sm font-medium text-white/60">Daily Metrics</h3>
+              <h3 className="mb-4 text-sm font-medium text-white/60">日次メトリクス</h3>
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/[.06] text-left text-white/30">
-                    <th className="pb-2 pr-4 font-medium">Date</th>
-                    <th className="pb-2 pr-4 font-medium">Business ID</th>
+                    <th className="pb-2 pr-4 font-medium">日付</th>
+                    <th className="pb-2 pr-4 font-medium">事業</th>
                     <th className="pb-2 pr-4 font-medium text-right">PV</th>
-                    <th className="pb-2 pr-4 font-medium text-right">Sessions</th>
-                    <th className="pb-2 pr-4 font-medium text-right">CVR</th>
-                    <th className="pb-2 font-medium text-right">Bounce</th>
+                    <th className="pb-2 pr-4 font-medium text-right">セッション</th>
+                    <th className="pb-2 pr-4 font-medium text-right">CV</th>
+                    <th className="pb-2 font-medium text-right">直帰率</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -94,11 +95,18 @@ export default function AnalyticsPage() {
                 </tbody>
               </table>
             </section>
+            )}
+
+            {data.entries.length === 0 && (
+              <div className="rounded-2xl border border-amber-500/10 bg-amber-500/[.03] p-4">
+                <p className="text-xs text-amber-400/70">GA4のアクセスデータはまだありません。分析パイプライン実行後に表示されます。</p>
+              </div>
+            )}
 
             {/* Improvement Suggestions */}
             {data.suggestions.length > 0 && (
               <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5">
-                <h3 className="mb-4 text-sm font-medium text-white/60">AI Improvement Suggestions</h3>
+                <h3 className="mb-4 text-sm font-medium text-white/60">AI改善提案</h3>
                 <div className="space-y-2">
                   {data.suggestions.map((s, i) => (
                     <div key={i} className="flex items-start gap-3 rounded-xl bg-black/30 p-4">
@@ -107,7 +115,7 @@ export default function AnalyticsPage() {
                         s.priority === "medium" ? "bg-amber-500/15 text-amber-400" :
                         "bg-blue-500/15 text-blue-400"
                       }`}>
-                        {s.priority}
+                        {s.priority === "high" ? "高" : s.priority === "medium" ? "中" : "低"}
                       </span>
                       <div className="min-w-0">
                         <p className="text-xs text-white/70">{s.text}</p>
@@ -131,8 +139,8 @@ function EmptyState() {
       <svg className="h-12 w-12 text-white/10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
       </svg>
-      <p className="mt-4 text-sm text-white/30">Analytics data not available yet</p>
-      <p className="mt-1 text-[11px] text-white/15">GA4 data will appear after the analytics pipeline runs</p>
+      <p className="mt-4 text-sm text-white/30">アナリティクスデータがありません</p>
+      <p className="mt-1 text-[11px] text-white/15">分析パイプライン実行後にデータが表示されます</p>
     </div>
   );
 }
