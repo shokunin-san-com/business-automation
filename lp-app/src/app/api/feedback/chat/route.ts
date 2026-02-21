@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getAllRows, appendRows, ensureSheetExists } from "@/lib/sheets";
+import { getAllRows, appendRows, ensureSheetExists, updateCell } from "@/lib/sheets";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -95,6 +95,19 @@ async function buildSystemPrompt(): Promise<string> {
     }
   } catch { /* ignore */ }
 
+  // 4. Current direction notes from settings
+  let ideaDirectionNotes = "";
+  let marketDirectionNotes = "";
+  try {
+    const settingsRows = await getAllRows("settings");
+    const settingsMap: Record<string, string> = {};
+    for (const r of settingsRows) {
+      settingsMap[r.key] = r.value || "";
+    }
+    ideaDirectionNotes = settingsMap["idea_direction_notes"] || "";
+    marketDirectionNotes = settingsMap["market_direction_notes"] || "";
+  } catch { /* ignore */ }
+
   return `あなたはMarketProbe事業検証自動化システムの運用アドバイザーです。
 運用者からのフィードバック・指示を受け取り、システム改善に活かします。
 
@@ -104,14 +117,21 @@ async function buildSystemPrompt(): Promise<string> {
 3. 過去の学習メモリを参照した文脈のある回答
 
 ## 指示の分類
-運用者が「〜して」「〜に変更して」等の指示を出した場合、回答の末尾に以下のタグを付けてください：
+運用者が「〜して」「〜に変更して」等の方針や方向性の指示を出した場合、回答の末尾に以下のタグを付けてください：
+[DIRECTIVE: idea_generation] — 事業案生成の方向性に関する指示（どんな事業をやりたいか、避けたいか等）
+[DIRECTIVE: market_exploration] — 市場探索・選定の方向性に関する指示（どんな市場を狙いたいか、条件等）
 [DIRECTIVE: lp_optimization] — LP改善に関する指示
 [DIRECTIVE: sns_strategy] — SNS戦略に関する指示
 [DIRECTIVE: form_sales] — フォーム営業に関する指示
-[DIRECTIVE: idea_generation] — 事業案生成に関する指示
 [DIRECTIVE: general] — その他の一般的な指示
 
+★重要: idea_generation と market_exploration の指示は、設定画面の「方向性メモ」に自動追記されます。
+次回のパイプライン実行時にAIプロンプトに直接反映されるため、具体的かつ簡潔にまとめてください。
+
 ※ 質問や分析依頼にはタグ不要です。明確な方針変更・指示の場合のみ付けてください。
+
+${ideaDirectionNotes ? `## 現在の事業案方向性メモ\n${ideaDirectionNotes}\n` : ""}
+${marketDirectionNotes ? `## 現在の市場探索方向性メモ\n${marketDirectionNotes}\n` : ""}
 
 ${performanceSummary ? `## 直近のパフォーマンス (7日間)\n${performanceSummary}\n` : "## パフォーマンスデータ\nまだデータがありません。\n"}
 
@@ -122,7 +142,9 @@ ${pipelineStatus ? `## パイプライン状況\n${pipelineStatus}\n` : ""}
 日本語で回答してください。データに基づく具体的なアドバイスを心がけてください。`;
 }
 
-async function saveDirective(content: string, category: string): Promise<void> {
+async function saveDirective(content: string, category: string): Promise<{ settingsUpdated?: string }> {
+  const result: { settingsUpdated?: string } = {};
+
   try {
     await ensureSheetExists("learning_memory", [
       "id", "type", "source", "category", "content",
@@ -141,6 +163,30 @@ async function saveDirective(content: string, category: string): Promise<void> {
   } catch (err) {
     console.error("Failed to save directive:", err);
   }
+
+  // Auto-append to direction notes in settings for idea/market categories
+  const settingsKeyMap: Record<string, string> = {
+    idea_generation: "idea_direction_notes",
+    market_exploration: "market_direction_notes",
+  };
+  const settingsKey = settingsKeyMap[category];
+  if (settingsKey) {
+    try {
+      const settingsRows = await getAllRows("settings");
+      const current = settingsRows.find((r) => r.key === settingsKey);
+      const existingValue = current?.value || "";
+      const timestamp = new Date().toLocaleDateString("ja-JP", { month: "short", day: "numeric" });
+      const newLine = `[${timestamp} チャット] ${content}`;
+      const updated = existingValue ? `${existingValue}\n${newLine}` : newLine;
+      await updateCell("settings", "key", settingsKey, "value", updated);
+      result.settingsUpdated = settingsKey;
+      console.log(`Auto-appended to ${settingsKey}: ${content.substring(0, 50)}...`);
+    } catch (err) {
+      console.error(`Failed to update ${settingsKey}:`, err);
+    }
+  }
+
+  return result;
 }
 
 function extractDirective(text: string): { category: string; content: string } | null {
@@ -254,10 +300,11 @@ async function createClaudeStream(
         // Check for directives and save
         const directive = extractDirective(fullText);
         if (directive) {
-          await saveDirective(directive.content, directive.category);
+          const saveResult = await saveDirective(directive.content, directive.category);
           const meta = JSON.stringify({
             directive_saved: true,
             category: directive.category,
+            settings_updated: saveResult.settingsUpdated || null,
           });
           controller.enqueue(encoder.encode(`data: ${meta}\n\n`));
         }
@@ -307,10 +354,11 @@ async function createGeminiStream(
         // Check for directives and save
         const directive = extractDirective(fullText);
         if (directive) {
-          await saveDirective(directive.content, directive.category);
+          const saveResult = await saveDirective(directive.content, directive.category);
           const meta = JSON.stringify({
             directive_saved: true,
             category: directive.category,
+            settings_updated: saveResult.settingsUpdated || null,
           });
           controller.enqueue(encoder.encode(`data: ${meta}\n\n`));
         }
