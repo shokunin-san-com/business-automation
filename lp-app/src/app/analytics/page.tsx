@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import AppShell from "../../components/AppShell";
 
 interface AnalyticsEntry {
@@ -13,9 +13,16 @@ interface AnalyticsEntry {
   avg_time: number;
 }
 
+interface Suggestion {
+  business_id: string;
+  text: string;
+  priority: string;
+  date: string;
+}
+
 interface AnalyticsData {
   entries: AnalyticsEntry[];
-  suggestions: { business_id: string; text: string; priority: string; date: string }[];
+  suggestions: Suggestion[];
   summary: {
     totalPageviews: number;
     totalSessions: number;
@@ -27,6 +34,9 @@ interface AnalyticsData {
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  // Track which suggestions have been acted on: key = suggestion text
+  const [actionedSuggestions, setActionedSuggestions] = useState<Record<string, "accepted" | "dismissed">>({});
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/analytics")
@@ -34,6 +44,32 @@ export default function AnalyticsPage() {
       .then(setData)
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  const handleSuggestionAction = useCallback(async (suggestion: Suggestion, action: "accept" | "dismiss") => {
+    setActionLoading(suggestion.text);
+    try {
+      const res = await fetch("/api/analytics/suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: suggestion.text,
+          priority: suggestion.priority,
+          business_id: suggestion.business_id,
+          action,
+        }),
+      });
+      if (res.ok) {
+        setActionedSuggestions((prev) => ({
+          ...prev,
+          [suggestion.text]: action === "accept" ? "accepted" : "dismissed",
+        }));
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setActionLoading(null);
+    }
   }, []);
 
   return (
@@ -108,21 +144,68 @@ export default function AnalyticsPage() {
               <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-5">
                 <h3 className="mb-4 text-sm font-medium text-white/60">AI改善提案</h3>
                 <div className="space-y-2">
-                  {data.suggestions.map((s, i) => (
-                    <div key={i} className="flex items-start gap-3 rounded-xl bg-black/30 p-4">
-                      <span className={`mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium ${
-                        s.priority === "high" ? "bg-red-500/15 text-red-400" :
-                        s.priority === "medium" ? "bg-amber-500/15 text-amber-400" :
-                        "bg-blue-500/15 text-blue-400"
+                  {data.suggestions.map((s, i) => {
+                    const status = actionedSuggestions[s.text];
+                    const isLoading = actionLoading === s.text;
+
+                    return (
+                      <div key={i} className={`rounded-xl bg-black/30 p-4 transition-all ${
+                        status ? "opacity-60" : ""
                       }`}>
-                        {s.priority === "high" ? "高" : s.priority === "medium" ? "中" : "低"}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-xs text-white/70">{s.text}</p>
-                        <p className="mt-1 text-[10px] text-white/30">{s.business_id} {"\u2022"} {s.date}</p>
+                        <div className="flex items-start gap-3">
+                          <span className={`mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                            s.priority === "high" ? "bg-red-500/15 text-red-400" :
+                            s.priority === "medium" ? "bg-amber-500/15 text-amber-400" :
+                            "bg-blue-500/15 text-blue-400"
+                          }`}>
+                            {s.priority === "high" ? "高" : s.priority === "medium" ? "中" : "低"}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-white/70">{s.text}</p>
+                            <p className="mt-1 text-[10px] text-white/30">{s.business_id} {"\u2022"} {s.date}</p>
+                          </div>
+                        </div>
+
+                        {/* Action buttons or status */}
+                        <div className="mt-3 flex items-center gap-2 pl-7">
+                          {status === "accepted" ? (
+                            <span className="flex items-center gap-1 text-[11px] text-emerald-400/80">
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                              学習メモリに反映済み
+                            </span>
+                          ) : status === "dismissed" ? (
+                            <span className="text-[11px] text-white/30">却下済み</span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleSuggestionAction(s, "accept")}
+                                disabled={isLoading}
+                                className="flex items-center gap-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-40"
+                              >
+                                {isLoading ? (
+                                  <span className="h-3 w-3 animate-spin rounded-full border border-emerald-400/30 border-t-emerald-400" />
+                                ) : (
+                                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                                反映する
+                              </button>
+                              <button
+                                onClick={() => handleSuggestionAction(s, "dismiss")}
+                                disabled={isLoading}
+                                className="rounded-lg border border-white/[.06] px-3 py-1.5 text-[11px] text-white/30 transition-colors hover:bg-white/[.04] hover:text-white/50 disabled:opacity-40"
+                              >
+                                却下
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             )}
