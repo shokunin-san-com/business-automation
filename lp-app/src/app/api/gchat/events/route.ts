@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isQuery, handleDataQuery, saveDirective } from "@/lib/bot-query";
+import { handleDataQuery } from "@/lib/bot-query";
 
 /**
  * POST /api/gchat/events
@@ -76,10 +76,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const sender = message?.sender;
-      const userId = sender?.displayName || sender?.name || "gchat_user";
-      const spaceName = chatEvent.messagePayload.space?.name || "unknown";
-
       // All messages go through AI (Gemini Pro) — handles queries, directives, settings changes
       const reply = await handleDataQuery(messageText);
       return addonResponse(reply);
@@ -147,10 +143,6 @@ export async function POST(request: NextRequest) {
         "メッセージ内容が空です。質問や要望を送ってください。\n例: 「直近のLP成果を教えて」",
       );
     }
-
-    const userId =
-      payload.user?.displayName || payload.user?.name || "gchat_user";
-    const spaceName = payload.space?.name || "unknown";
 
     // All messages go through AI (Gemini Pro)
     const reply = await handleDataQuery(messageText);

@@ -93,6 +93,7 @@ export default function AppShell({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5 min-w-0">
               {userImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={userImage} alt="" className="h-8 w-8 rounded-full" />
               ) : (
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-orange-400 text-xs font-bold">

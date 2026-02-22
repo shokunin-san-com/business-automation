@@ -5,7 +5,6 @@ import crypto from "crypto";
 import { getAllRows, appendRows, ensureSheetExists, updateCell, getSheetUrls } from "@/lib/sheets";
 import { getAccessToken, GCP_PROJECT, GCP_REGION, JOB_MAP } from "@/lib/gcp-auth";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import Anthropic from "@anthropic-ai/sdk";
 
 const LEARNING_HEADERS = [
   "id", "type", "source", "category", "content",

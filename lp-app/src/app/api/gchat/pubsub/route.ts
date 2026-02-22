@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { getChatAccessToken, getWorkspaceEventsToken } from "@/lib/gcp-auth";
-import { isQuery, isExecutionCommand, handleDataQuery, handleExecutionCommand, saveDirective } from "@/lib/bot-query";
+import { isExecutionCommand, handleDataQuery, handleExecutionCommand } from "@/lib/bot-query";
 
 /**
  * POST /api/gchat/pubsub
@@ -86,6 +86,7 @@ async function postChatMessage(
 }
 
 /** Fetch a message from Chat API by resource name (for Workspace Events API mode) */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function fetchChatMessage(
   messageName: string,
   token: string,
@@ -197,7 +198,7 @@ export async function POST(request: NextRequest) {
   if (isWorkspaceEventsMode) {
     after(async () => {
       try {
-        await handleWorkspaceEvent(eventData, ceType, pubsubMessage);
+        await handleWorkspaceEvent(eventData, ceType);
       } catch (err) {
         console.error("[pubsub] Background workspace handler error:", err);
       }
@@ -362,7 +363,6 @@ async function handleChatAppEvent(event: ChatAppEvent) {
 async function handleWorkspaceEvent(
   eventData: ChatAppEvent,
   ceType: string,
-  pubsubMessage: { data: string; attributes?: Record<string, string> },
 ) {
   // Only handle message creation events
   if (

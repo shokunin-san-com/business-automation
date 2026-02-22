@@ -47,10 +47,12 @@ def _retry_on_rate_limit(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        last_exception = None
         for attempt in range(1, SHEETS_MAX_RETRIES + 1):
             try:
                 return func(*args, **kwargs)
             except gspread.exceptions.APIError as e:
+                last_exception = e
                 status_code = e.response.status_code if hasattr(e, "response") else 0
                 if status_code == 429 and attempt < SHEETS_MAX_RETRIES:
                     delay = SHEETS_RETRY_BASE_DELAY * (2 ** (attempt - 1))  # 2, 4, 8s
@@ -61,6 +63,9 @@ def _retry_on_rate_limit(func):
                     time.sleep(delay)
                 else:
                     raise
+        # Safety net: should never reach here, but re-raise if it does
+        if last_exception:
+            raise last_exception
 
     return wrapper
 

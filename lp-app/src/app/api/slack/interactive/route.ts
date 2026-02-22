@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
           }),
         });
 
-        const result = await res.json();
+        await res.json();
         const emoji = approveAction === "approve" ? "\u2705" : "\u274C";
         const label = approveAction === "approve" ? "\u627F\u8A8D" : "\u5374\u4E0B";
 

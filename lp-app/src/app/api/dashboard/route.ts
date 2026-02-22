@@ -154,7 +154,7 @@ export async function GET() {
     } catch { /* sheet may not exist yet */ }
 
     // --- Scheduler status from Cloud Scheduler API ---
-    let schedulerStatus: Record<string, { state: string; schedule: string; nextRun: string }> = {};
+    const schedulerStatus: Record<string, { state: string; schedule: string; nextRun: string }> = {};
     try {
       const token = await getAccessToken();
       const schedulerUrl = `https://cloudscheduler.googleapis.com/v1/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs`;

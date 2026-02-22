@@ -13,9 +13,8 @@ const handler = NextAuth({
   },
   callbacks: {
     async session({ session, token }) {
-      // Attach Slack user info to session
       if (token.sub) {
-        (session as any).userId = token.sub;
+        (session as unknown as Record<string, unknown>).userId = token.sub;
       }
       if (token.picture) {
         session.user = { ...session.user, image: token.picture as string };
@@ -24,7 +23,7 @@ const handler = NextAuth({
     },
     async jwt({ token, profile }) {
       if (profile) {
-        token.slackId = (profile as any).sub;
+        token.slackId = (profile as Record<string, unknown>).sub;
       }
       return token;
     },
