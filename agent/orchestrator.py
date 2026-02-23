@@ -1,0 +1,566 @@
+"""
+Agent Orchestrator — autonomous pipeline management agent.
+
+Phase 1: Tool dispatch framework with --test-tools mode.
+Phase 2: Claude API tool_use loop for autonomous operation.
+Phase 3: Snapshot-based diff verification with --run-with-verification.
+
+Usage:
+    python -m agent.orchestrator --test-tools                # Phase 1 QA
+    python -m agent.orchestrator                             # Run agent (default: health check)
+    python -m agent.orchestrator --task "check errors"       # Custom task
+    python -m agent.orchestrator --max-turns 5               # Limit conversation turns
+    python -m agent.orchestrator --run-with-verification     # Run pipeline + verify diff
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import traceback
+
+import anthropic
+
+from agent.config import CLAUDE_API_KEY, CLAUDE_MODEL, get_logger
+from agent.system_prompt import SYSTEM_PROMPT
+from agent.tool_definitions import TOOL_DEFINITIONS
+from agent.notifier import notify
+from agent.tools.logs_reader import read_logs
+from agent.tools.scheduler_client import (
+    list_jobs,
+    pause_job,
+    resume_job,
+    trigger_job,
+)
+from agent.tools.sheets_reader import read_sheet, list_sheets
+from agent.tools.job_runner import run_job, get_execution_status
+
+logger = get_logger("agent.orchestrator")
+
+# ── Tool dispatch map ──
+# Maps tool name → callable function
+TOOL_DISPATCH = {
+    "read_logs": read_logs,
+    "list_scheduler_jobs": list_jobs,
+    "pause_scheduler_job": pause_job,
+    "resume_scheduler_job": resume_job,
+    "trigger_scheduler_job": trigger_job,
+    "read_sheet": read_sheet,
+    "list_sheets": list_sheets,
+    "run_pipeline_job": run_job,
+    "get_execution_status": get_execution_status,
+}
+
+DEFAULT_TASK = (
+    "パイプラインの健全性チェックを実行してください。\n"
+    "1. 直近24時間のエラーログを確認\n"
+    "2. スケジューラジョブの状態を確認\n"
+    "3. settingsシートとpipeline_statusシートを確認\n"
+    "4. 問題があれば報告、なければ正常を報告"
+)
+
+
+def dispatch_tool(tool_name: str, tool_input: dict) -> str:
+    """
+    Dispatch a tool call and return the result as a JSON string.
+
+    Args:
+        tool_name: Name of the tool to call (must be in TOOL_DISPATCH).
+        tool_input: Dict of arguments to pass to the tool function.
+
+    Returns:
+        JSON string of the tool result.
+
+    Raises:
+        ValueError: If the tool name is unknown.
+    """
+    if tool_name not in TOOL_DISPATCH:
+        raise ValueError(
+            f"Unknown tool: {tool_name}. "
+            f"Available: {list(TOOL_DISPATCH.keys())}"
+        )
+
+    func = TOOL_DISPATCH[tool_name]
+    logger.info("Dispatching tool: %s(%s)", tool_name, tool_input)
+
+    result = func(**tool_input)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+# ═══════════════════════════════════════════════════════════
+# Phase 2: tool_use loop
+# ═══════════════════════════════════════════════════════════
+
+
+def run_agent(task: str = DEFAULT_TASK, max_turns: int = 15) -> tuple[str, int, int]:
+    """
+    Run the autonomous agent with a Claude API tool_use loop.
+
+    Args:
+        task: The task/instruction for the agent to execute.
+        max_turns: Maximum number of API round-trips (safety limit).
+
+    Returns:
+        Tuple of (final_response, turns_used, tool_calls_count).
+    """
+    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+
+    messages = [{"role": "user", "content": task}]
+    final_response = ""
+    turn = 0
+    total_tool_calls = 0
+
+    logger.info("Starting agent loop (max_turns=%d)", max_turns)
+    logger.info("Task: %s", task[:200])
+
+    while turn < max_turns:
+        turn += 1
+        logger.info("── Turn %d/%d ──", turn, max_turns)
+
+        try:
+            response = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=4096,
+                system=SYSTEM_PROMPT,
+                tools=TOOL_DEFINITIONS,
+                messages=messages,
+            )
+        except anthropic.APIError as e:
+            logger.error("Claude API error: %s", e)
+            notify("Agent API Error", f"Claude API call failed:\n```\n{e}\n```", is_error=True)
+            return (f"API Error: {e}", turn, total_tool_calls)
+
+        logger.info("stop_reason=%s, usage=%s", response.stop_reason, response.usage)
+
+        # Process response content blocks
+        tool_results = []
+        text_parts = []
+
+        for block in response.content:
+            if block.type == "text":
+                text_parts.append(block.text)
+                logger.info("Agent text: %s", block.text[:200])
+
+            elif block.type == "tool_use":
+                tool_name = block.name
+                tool_input = block.input
+                tool_use_id = block.id
+
+                total_tool_calls += 1
+                logger.info("Tool call: %s(%s)", tool_name, json.dumps(tool_input, ensure_ascii=False)[:200])
+
+                # Execute the tool
+                try:
+                    result_json = dispatch_tool(tool_name, tool_input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": result_json,
+                    })
+                    logger.info("Tool result: %s", result_json[:200])
+                except Exception as e:
+                    error_msg = f"Tool error: {e}"
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": json.dumps({"error": str(e)}),
+                        "is_error": True,
+                    })
+                    logger.error("Tool dispatch failed: %s", e)
+
+        # Check stop condition
+        if response.stop_reason == "end_turn":
+            final_response = "\n".join(text_parts)
+            logger.info("Agent completed (end_turn) at turn %d", turn)
+            break
+
+        # If there are tool results, send them back
+        if tool_results:
+            # Add assistant's response to messages
+            messages.append({"role": "assistant", "content": response.content})
+            # Add tool results
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            # No tool calls and not end_turn — shouldn't happen, but break to be safe
+            final_response = "\n".join(text_parts) if text_parts else "Agent ended without response."
+            logger.warning("Agent ended without tool_use or end_turn at turn %d", turn)
+            break
+
+    else:
+        # max_turns exceeded
+        final_response = f"Agent reached max_turns limit ({max_turns}). Last response: " + "\n".join(text_parts)
+        logger.warning("Max turns (%d) exceeded", max_turns)
+
+    return final_response, turn, total_tool_calls
+
+
+# ═══════════════════════════════════════════════════════════
+# Phase 1: test tools
+# ═══════════════════════════════════════════════════════════
+
+
+def test_tools() -> bool:
+    """
+    Validate all tools can be imported and dispatched.
+    Calls each tool with safe/minimal arguments.
+    Returns True if all tests pass.
+    """
+    print("=" * 60)
+    print("Agent Tool Test Suite — Phase 1")
+    print("=" * 60)
+
+    results = {}
+
+    # ── 1. read_logs ──
+    _run_test(
+        results,
+        "read_logs",
+        {"job_name": "marketprobe-pipeline", "severity": "ERROR", "minutes": 5, "limit": 3},
+    )
+
+    # ── 2. list_scheduler_jobs ──
+    _run_test(results, "list_scheduler_jobs", {})
+
+    # ── 3. read_sheet (settings) ──
+    _run_test(results, "read_sheet", {"sheet_name": "settings", "row_limit": 5})
+
+    # ── 4. list_sheets ──
+    _run_test(results, "list_sheets", {})
+
+    # ── 5. Verify tool definitions match dispatch ──
+    print(f"\n{'─' * 40}")
+    print("Checking tool_definitions ↔ dispatch consistency...")
+    definition_names = {t["name"] for t in TOOL_DEFINITIONS}
+    dispatch_names = set(TOOL_DISPATCH.keys())
+    missing_dispatch = definition_names - dispatch_names
+    missing_defs = dispatch_names - definition_names
+    if missing_dispatch:
+        print(f"  ❌ Defined but no dispatch: {missing_dispatch}")
+        results["consistency"] = False
+    elif missing_defs:
+        print(f"  ❌ Dispatch but no definition: {missing_defs}")
+        results["consistency"] = False
+    else:
+        print(f"  ✅ All {len(definition_names)} tools have matching definitions and dispatch")
+        results["consistency"] = True
+
+    # ── Summary ──
+    print(f"\n{'=' * 60}")
+    print("Test Results:")
+    all_passed = True
+    for name, passed in results.items():
+        status = "✅ PASS" if passed else "❌ FAIL"
+        print(f"  {status}  {name}")
+        if not passed:
+            all_passed = False
+
+    print(f"\n{'=' * 60}")
+    if all_passed:
+        print("🎉 All tests passed! Phase 1 tools are operational.")
+    else:
+        print("⚠️  Some tests failed. Check errors above.")
+    print(f"{'=' * 60}")
+
+    return all_passed
+
+
+def _run_test(results: dict, tool_name: str, tool_input: dict) -> None:
+    """Run a single tool test and record the result."""
+    print(f"\n{'─' * 40}")
+    print(f"Testing: {tool_name}({json.dumps(tool_input, ensure_ascii=False)})")
+    try:
+        result_json = dispatch_tool(tool_name, tool_input)
+        result = json.loads(result_json)
+
+        # Show a brief preview of the result
+        if isinstance(result, list):
+            print(f"  ✅ Returned {len(result)} items")
+            if result:
+                # Show first item keys
+                if isinstance(result[0], dict):
+                    print(f"     Keys: {list(result[0].keys())}")
+                else:
+                    print(f"     First: {str(result[0])[:80]}")
+        elif isinstance(result, dict):
+            print(f"  ✅ Returned dict with keys: {list(result.keys())}")
+        else:
+            print(f"  ✅ Returned: {str(result)[:100]}")
+
+        results[tool_name] = True
+
+    except Exception as e:
+        print(f"  ❌ Error: {e}")
+        traceback.print_exc()
+        results[tool_name] = False
+
+
+def wait_for_completion(execution_name: str, timeout: int = 2400, interval: int = 30) -> str:
+    """
+    Wait for a Cloud Run Job execution to complete.
+
+    Polls get_execution_status() every `interval` seconds until
+    the execution succeeds, fails, or times out.
+
+    Args:
+        execution_name: Full resource name of the execution (from run_job).
+        timeout: Maximum wait time in seconds (default: 2400 = 40 min).
+        interval: Polling interval in seconds (default: 30).
+
+    Returns:
+        Final status string ('succeeded' or 'failed').
+
+    Raises:
+        RuntimeError: If the execution fails.
+        TimeoutError: If timeout is exceeded.
+    """
+    start = time.time()
+    logger.info("Waiting for execution: %s (timeout=%ds)", execution_name, timeout)
+
+    while time.time() - start < timeout:
+        status_info = get_execution_status(execution_name)
+        status = status_info.get("status", "unknown")
+
+        elapsed = int(time.time() - start)
+        logger.info("Execution status: %s (elapsed=%ds)", status, elapsed)
+
+        if status == "succeeded":
+            return status
+        if status == "failed":
+            raise RuntimeError(f"ジョブ失敗: execution={execution_name}")
+
+        time.sleep(interval)
+
+    raise TimeoutError(f"{timeout}秒以内に完了しませんでした: {execution_name}")
+
+
+def run_with_verification() -> bool:
+    """
+    Run orchestrate_abc0 with before/after snapshot verification.
+
+    Flow:
+      1. Save before-snapshot
+      2. Start orchestrate_abc0 via Cloud Run
+      3. Wait for completion (max 40 min)
+      4. Take after-snapshot and compute diff score
+      5. Generate agent commentary on results
+      6. Notify and record to history
+
+    Returns:
+        True if consistency score >= 60.
+    """
+    from agent.verification.consistency_checker import save_snapshot, check_with_snapshot
+    from agent.learning.history_writer import record_run
+
+    start_time = time.time()
+
+    # Step 1: Before snapshot
+    logger.info("=" * 60)
+    logger.info("run-with-verification: Step 1 — Before snapshot")
+    logger.info("=" * 60)
+    before_path = save_snapshot()
+    notify("📸 実行前スナップショット取得完了", f"保存先: {before_path}")
+
+    # Step 2: Start orchestrate_abc0
+    logger.info("=" * 60)
+    logger.info("run-with-verification: Step 2 — Starting orchestrate_abc0")
+    logger.info("=" * 60)
+    run_result = run_job("orchestrate_abc0")
+    execution_name = run_result.get("execution_name", "")
+    notify(
+        "🚀 orchestrate_abc0 起動",
+        f"execution: {execution_name}\njob: {run_result.get('job_name', '')}",
+    )
+
+    # Step 3: Wait for completion
+    logger.info("=" * 60)
+    logger.info("run-with-verification: Step 3 — Waiting for completion")
+    logger.info("=" * 60)
+    try:
+        final_status = wait_for_completion(execution_name, timeout=2400, interval=30)
+        logger.info("Job completed: status=%s", final_status)
+    except (RuntimeError, TimeoutError) as e:
+        elapsed = time.time() - start_time
+        error_msg = str(e)
+        logger.error("Job failed or timed out: %s", error_msg)
+        notify(f"❌ orchestrate_abc0 失敗 ({elapsed:.0f}秒)", error_msg, is_error=True)
+        record_run(
+            task="run-with-verification",
+            duration_seconds=elapsed,
+            turns_used=0,
+            tool_calls_count=0,
+            consistency_score=0,
+            errors=[error_msg],
+            response_summary=f"ジョブ失敗: {error_msg}",
+        )
+        return False
+
+    # Step 4: After snapshot + diff check
+    logger.info("=" * 60)
+    logger.info("run-with-verification: Step 4 — Consistency check")
+    logger.info("=" * 60)
+    check_result = check_with_snapshot(before_path)
+
+    print("\n" + "=" * 60)
+    print("整合性チェック結果:")
+    print("=" * 60)
+    print(check_result.summary())
+
+    # Step 5: Agent commentary
+    logger.info("=" * 60)
+    logger.info("run-with-verification: Step 5 — Agent commentary")
+    logger.info("=" * 60)
+    commentary, turns, tool_calls = run_agent(
+        task=(
+            f"以下の整合性チェック結果を分析し、問題点と推奨アクションをまとめてください。\n\n"
+            f"スコア: {check_result.score}/100\n"
+            f"内訳: {json.dumps(check_result.breakdown, ensure_ascii=False)}\n"
+            f"差分: {json.dumps(check_result.diff, ensure_ascii=False)}\n"
+            f"エラー: {json.dumps(check_result.errors, ensure_ascii=False)}"
+        ),
+        max_turns=3,
+    )
+
+    # Step 6: Notify + record
+    elapsed = time.time() - start_time
+    score_report = (
+        f"📊 整合性スコア: {check_result.score}/100\n\n"
+        f"{check_result.summary()}\n\n"
+        f"---\n{commentary[:1500]}"
+    )
+
+    notify(
+        f"整合性レポート (スコア: {check_result.score}/100, {elapsed:.0f}秒)",
+        score_report,
+        is_error=not check_result.is_healthy,
+    )
+
+    record_run(
+        task="run-with-verification",
+        duration_seconds=elapsed,
+        turns_used=turns,
+        tool_calls_count=tool_calls,
+        consistency_score=check_result.score,
+        errors=check_result.errors,
+        response_summary=commentary[:500],
+    )
+
+    logger.info("=" * 60)
+    logger.info("run-with-verification completed: score=%d, elapsed=%.0fs", check_result.score, elapsed)
+    logger.info("=" * 60)
+
+    return check_result.is_healthy
+
+
+def main():
+    parser = argparse.ArgumentParser(description="MarketProbe Agent Orchestrator")
+    parser.add_argument(
+        "--test-tools",
+        action="store_true",
+        help="Run tool validation tests (Phase 1 QA)",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="(Deprecated) Use --run-with-verification instead",
+    )
+    parser.add_argument(
+        "--run-with-verification",
+        action="store_true",
+        help="Run orchestrate_abc0 with before/after snapshot verification",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="",
+        help="Custom task for the agent (default: health check)",
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=15,
+        help="Maximum number of API round-trips (default: 15)",
+    )
+    args = parser.parse_args()
+
+    if args.test_tools:
+        success = test_tools()
+        sys.exit(0 if success else 1)
+
+    if args.verify:
+        print("⚠️  --verify 単体は廃止されました。")
+        print("   正確な差分検証には --run-with-verification を使用してください。")
+        sys.exit(1)
+
+    if args.run_with_verification:
+        healthy = run_with_verification()
+        sys.exit(0 if healthy else 1)
+
+    # Run the agent
+    task = args.task if args.task else DEFAULT_TASK
+    start_time = time.time()
+
+    logger.info("=" * 60)
+    logger.info("MarketProbe Agent — Starting")
+    logger.info("=" * 60)
+
+    result, turns_used, tool_calls_count = run_agent(task=task, max_turns=args.max_turns)
+
+    elapsed = time.time() - start_time
+    logger.info("=" * 60)
+    logger.info("Agent completed in %.1f seconds (%d turns, %d tool calls)", elapsed, turns_used, tool_calls_count)
+    logger.info("=" * 60)
+
+    # Print the final response
+    print("\n" + "=" * 60)
+    print("Agent Response:")
+    print("=" * 60)
+    print(result)
+
+    # Send notification
+    is_error = "error" in result.lower() or "失敗" in result
+    notify(
+        f"パイプライン巡回完了 ({elapsed:.0f}秒, {turns_used}ターン)",
+        result[:2000],
+        is_error=is_error,
+    )
+
+    # Phase 4: Record to history and detect patterns
+    try:
+        from agent.learning.history_writer import record_run
+        from agent.learning.pattern_detector import detect_patterns, generate_direction_update
+
+        # Record this run
+        run_errors = []
+        if is_error:
+            run_errors.append("Agent response indicates error")
+
+        record_run(
+            task=task,
+            duration_seconds=elapsed,
+            turns_used=turns_used,
+            tool_calls_count=tool_calls_count,
+            consistency_score=None,  # Only set when --verify is used
+            errors=run_errors,
+            response_summary=result[:500],
+        )
+        logger.info("Run recorded to agent_history")
+
+        # Detect patterns
+        patterns_result = detect_patterns()
+        if patterns_result.get("recommendations"):
+            direction_update = generate_direction_update(patterns_result)
+            if direction_update:
+                logger.info("Pattern detection recommendations:\n%s", direction_update)
+                print("\n" + "─" * 40)
+                print("Learning Loop — Pattern Detection:")
+                print("─" * 40)
+                print(direction_update)
+
+    except Exception as e:
+        logger.warning("Learning loop failed (non-critical): %s", e)
+
+
+if __name__ == "__main__":
+    main()

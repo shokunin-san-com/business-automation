@@ -229,7 +229,7 @@ export async function POST(request: NextRequest) {
 // Chat App Pub/Sub handler
 // ---------------------------------------------------------------------------
 
-async function handleChatAppEvent(event: ChatAppEvent) {
+async function handleChatAppEvent(event: ChatAppEvent): Promise<void> {
   const eventType = event.type || "";
 
   // ADDED_TO_SPACE
@@ -247,95 +247,20 @@ async function handleChatAppEvent(event: ChatAppEvent) {
       const token = await getChatAccessToken();
       await postChatMessage(event.space.name, reply, undefined, token);
     }
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // REMOVED_FROM_SPACE
   if (eventType === "REMOVED_FROM_SPACE") {
-    return NextResponse.json({ ok: true });
+    return;
   }
 
-  // MESSAGE
+  // MESSAGE — skip in Chat App Pub/Sub mode.
+  // The /api/gchat/events HTTP endpoint handles MESSAGE synchronously.
+  // Processing here would cause duplicate bot replies.
   if (eventType === "MESSAGE") {
-    const message = event.message;
-
-    // Deduplicate by Chat message resource name (catches both modes for same message)
-    const chatMsgName = message?.name || "";
-    if (chatMsgName && isDuplicate(`chat_${chatMsgName}`)) {
-      return NextResponse.json({ ok: true });
-    }
-
-    const rawText =
-      message?.argumentText?.trim() || message?.text?.trim() || "";
-
-    if (!rawText) {
-      if (event.space?.name) {
-        const token = await getChatAccessToken();
-        await postChatMessage(
-          event.space.name,
-          "メッセージ内容が空です。質問や要望を送ってください。\n例: 「直近のLP成果を教えて」",
-          message?.thread?.name,
-          token,
-        );
-      }
-      return NextResponse.json({ ok: true });
-    }
-
-    // Skip messages from bots (avoid infinite loops)
-    const senderType =
-      message?.sender?.type || event.user?.type || "";
-    if (senderType === "BOT") {
-      console.log("[pubsub] Skipping bot message");
-      return NextResponse.json({ ok: true });
-    }
-
-    // Check for bot trigger: DM, @mention, or "bva" prefix
-    const hasBotAnnotation = message?.annotations?.some(
-      (a) => a.type === "USER_MENTION" && a.userMention?.user?.type === "BOT"
-    ) ?? false;
-    const startsWithTrigger = /^(\/bva|bva)\b/i.test(rawText);
-    const spaceType = event.space?.type || "";
-    const isDM = spaceType === "DM";
-
-    if (!isDM && !hasBotAnnotation && !startsWithTrigger) {
-      console.log("[pubsub/chatapp] No bot trigger, skipping");
-      return NextResponse.json({ ok: true });
-    }
-
-    // Strip "bva" prefix from the message text
-    const messageText = rawText.replace(/^(\/bva|bva)\s*/i, "").trim();
-
-    const senderName =
-      message?.sender?.displayName ||
-      event.user?.displayName ||
-      event.user?.name ||
-      "gchat_user";
-    const spaceName = event.space?.name || "unknown";
-
-    console.log(
-      `[pubsub/chatapp] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
-    );
-
-    // Process: execution command > AI (query / directive / settings change)
-    let reply: string;
-    if (!messageText) {
-      reply = "何をお手伝いしましょうか？\n例: 「パイプライン状況教えて」「LP成果どう？」「ターゲットに再エネ追加して」";
-    } else {
-      const execCmd = isExecutionCommand(messageText);
-      if (execCmd) {
-        reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
-      } else {
-        // All non-execution messages go through AI (Gemini Pro)
-        // AI handles: queries, strategic discussions, settings changes, directives
-        reply = await handleDataQuery(messageText);
-      }
-    }
-
-    // Post the reply via Chat API
-    const token = await getChatAccessToken();
-    await postChatMessage(spaceName, reply, message?.thread?.name, token);
-
-    return NextResponse.json({ ok: true });
+    console.log("[pubsub/chatapp] MESSAGE skipped — handled by /api/gchat/events HTTP endpoint");
+    return;
   }
 
   // CARD_CLICKED
@@ -349,11 +274,10 @@ async function handleChatAppEvent(event: ChatAppEvent) {
         token,
       );
     }
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   console.log(`[pubsub/chatapp] Ignoring event type: ${eventType}`);
-  return NextResponse.json({ ok: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +287,7 @@ async function handleChatAppEvent(event: ChatAppEvent) {
 async function handleWorkspaceEvent(
   eventData: ChatAppEvent,
   ceType: string,
-) {
+): Promise<void> {
   // Only handle message creation events
   if (
     ceType !== "google.workspace.chat.message.v1.created" &&
@@ -377,7 +301,7 @@ async function handleWorkspaceEvent(
     } else {
       console.log(`[pubsub/workspace] Ignoring event type: ${ceType}`);
     }
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // With includeResource=true, the full message is embedded in eventData.message
@@ -387,12 +311,12 @@ async function handleWorkspaceEvent(
   if (!msg?.name) {
     console.warn("[pubsub/workspace] No message in event data");
     console.warn("[pubsub/workspace] Event data:", JSON.stringify(eventData).substring(0, 500));
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // Deduplicate by Chat message resource name
   if (isDuplicate(`chat_${msg.name}`)) {
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   const messageText =
@@ -409,13 +333,13 @@ async function handleWorkspaceEvent(
   // Skip bot messages
   if (senderType === "BOT") {
     console.log("[pubsub/workspace] Skipping bot message");
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // Skip empty
   if (!messageText) {
     console.log("[pubsub/workspace] Empty message, skipping");
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // Only respond to messages directed at the bot.
@@ -432,7 +356,7 @@ async function handleWorkspaceEvent(
   const isDM = spaceType === "DM";
   if (!isDM && !hasBotAnnotation && !startsWithTrigger) {
     console.log("[pubsub/workspace] No bot trigger, skipping");
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   console.log(
@@ -453,8 +377,6 @@ async function handleWorkspaceEvent(
   if (spaceName) {
     await postChatMessage(spaceName, reply, threadName);
   }
-
-  return NextResponse.json({ ok: true });
 }
 
 // ---------------------------------------------------------------------------

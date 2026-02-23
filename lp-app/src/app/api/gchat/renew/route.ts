@@ -5,7 +5,7 @@ import { getWorkspaceEventsToken } from "@/lib/gcp-auth";
  * GET /api/gchat/renew
  *
  * Periodically re-creates the Workspace Events API subscription for
- * the Google Chat space. Called by Vercel Cron every 3 hours.
+ * the Google Chat space. Called by Cloud Scheduler (every 3h) + Vercel daily cron as fallback.
  *
  * The Workspace Events API subscription TTL is ~4 hours.
  * The previous approach (renewSubscription on lifecycle event) failed

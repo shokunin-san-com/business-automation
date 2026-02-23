@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { handleDataQuery } from "@/lib/bot-query";
+import { isExecutionCommand, handleExecutionCommand, handleDataQuery } from "@/lib/bot-query";
+
+// Vercel max duration: give enough time for Gemini Pro to respond
+export const maxDuration = 120;
 
 /**
  * POST /api/gchat/events
@@ -76,7 +79,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // All messages go through AI (Gemini Pro) — handles queries, directives, settings changes
+      // Execution command check (e.g. "市場調査を実行して")
+      const execCmd = isExecutionCommand(messageText);
+      if (execCmd) {
+        const execReply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, "gchat_user");
+        return addonResponse(execReply);
+      }
+
+      // All other messages go through AI (Gemini Pro) — handles queries, directives, settings changes
       const reply = await handleDataQuery(messageText);
       return addonResponse(reply);
     }
@@ -144,7 +154,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // All messages go through AI (Gemini Pro)
+    // Execution command check (e.g. "市場調査を実行して")
+    const legacyExecCmd = isExecutionCommand(messageText);
+    if (legacyExecCmd) {
+      const execReply = await handleExecutionCommand(legacyExecCmd.scriptId, legacyExecCmd.label, "gchat_user");
+      return legacyResponse(execReply);
+    }
+
+    // All other messages go through AI (Gemini Pro)
     const reply = await handleDataQuery(messageText);
     return legacyResponse(reply);
   }

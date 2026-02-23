@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import crypto from "crypto";
-import { isQuery, handleDataQuery, saveDirective } from "@/lib/bot-query";
+import { isExecutionCommand, handleExecutionCommand, handleDataQuery } from "@/lib/bot-query";
 
 /**
  * POST /api/slack/events
@@ -184,11 +184,13 @@ async function handleSlackEvent(event: {
 
     console.log(`[slack/events] Processing mention: "${message.substring(0, 50)}"`);
 
-    if (isQuery(message)) {
-      const reply = await handleDataQuery(message);
+    // Execution command > AI (unified with Google Chat)
+    const execCmd = isExecutionCommand(message);
+    if (execCmd) {
+      const reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, event.user || "slack_user");
       await postSlackReply(channel, threadTs, reply);
     } else {
-      const reply = await saveDirective(message, "slack_mention", event.user || "slack_user", channel);
+      const reply = await handleDataQuery(message);
       await postSlackReply(channel, threadTs, reply);
     }
     return;
@@ -203,11 +205,13 @@ async function handleSlackEvent(event: {
 
     console.log(`[slack/events] Processing DM: "${message.substring(0, 50)}"`);
 
-    if (isQuery(message)) {
-      const reply = await handleDataQuery(message);
+    // Execution command > AI (unified with Google Chat)
+    const dmExecCmd = isExecutionCommand(message);
+    if (dmExecCmd) {
+      const reply = await handleExecutionCommand(dmExecCmd.scriptId, dmExecCmd.label, event.user || "slack_user");
       await postSlackReply(channel, null, reply);
     } else {
-      const reply = await saveDirective(message, "slack_dm", event.user || "slack_user", channel);
+      const reply = await handleDataQuery(message);
       await postSlackReply(channel, null, reply);
     }
   }
