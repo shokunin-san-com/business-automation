@@ -130,11 +130,11 @@ def register(
     parent = _parent()
     full_name = f"{parent}/jobs/{job_name}"
 
-    # Cloud Run Job target URL
+    # Cloud Run Job target URL (v1 API — matches existing scheduler jobs)
     job_url = (
-        f"https://{GCP_REGION}-run.googleapis.com/v2/"
-        f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/"
-        f"jobs/{target_job_id}:run"
+        f"https://{GCP_REGION}-run.googleapis.com/"
+        f"apis/run.googleapis.com/v1/"
+        f"namespaces/{GCP_PROJECT_ID}/jobs/{target_job_id}:run"
     )
 
     job = scheduler_v1.Job(
@@ -147,8 +147,9 @@ def register(
             http_method=scheduler_v1.HttpMethod.POST,
             oauth_token=scheduler_v1.OAuthToken(
                 service_account_email=(
-                    f"{GCP_PROJECT_ID}@appspot.gserviceaccount.com"
+                    f"marketprobe-pipeline@{GCP_PROJECT_ID}.iam.gserviceaccount.com"
                 ),
+                scope="https://www.googleapis.com/auth/cloud-platform",
             ),
         ),
         retry_config=scheduler_v1.RetryConfig(
