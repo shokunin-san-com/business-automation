@@ -254,7 +254,8 @@ export async function handleAgentTask(
     if (!res.ok) {
       const errText = await res.text();
       console.error(`[bot-query] Agent execute error for ${jobId}:`, errText);
-      return `⚠️ エージェントタスクの実行に失敗しました（${res.status}）。`;
+      const shortErr = errText.substring(0, 200);
+      return `⚠️ エージェントタスクの実行に失敗しました（${res.status}）。\n\`\`\`\n${shortErr}\n\`\`\``;
     }
 
     const result = await res.json();
