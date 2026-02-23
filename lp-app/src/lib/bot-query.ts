@@ -211,8 +211,9 @@ export function isAgentTask(
 }
 
 /**
- * Submit a task to the autonomous agent via /api/agent/execute.
- * Returns a user-facing status message.
+ * Submit a task to the autonomous agent.
+ * Directly calls the Cloud Run Jobs API (same pattern as handleExecutionCommand)
+ * instead of going through /api/agent/execute to avoid Vercel internal fetch issues.
  */
 export async function handleAgentTask(
   message: string,
@@ -220,35 +221,64 @@ export async function handleAgentTask(
   source: string,
 ): Promise<string> {
   try {
-    const baseUrl =
-      process.env.NEXT_PUBLIC_BASE_URL ||
-      (process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : "http://localhost:3000");
+    const jobId = "agent-orchestrator";
+    const token = await getAccessToken();
+    const url = `https://${GCP_REGION}-run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/${jobId}:run`;
 
-    const res = await fetch(`${baseUrl}/api/agent/execute`, {
+    // Build container override with AGENT_TASK and AGENT_CONTEXT env vars
+    const envOverrides: { name: string; value: string }[] = [
+      { name: "AGENT_TASK", value: message },
+      {
+        name: "AGENT_CONTEXT",
+        value: JSON.stringify({ triggered_by: triggeredBy, source }),
+      },
+    ];
+
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        task: message,
-        context: {
-          triggered_by: triggeredBy,
-          source,
+        overrides: {
+          containerOverrides: [
+            {
+              env: envOverrides,
+            },
+          ],
         },
       }),
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: "Unknown error" }));
-      console.error("[bot-query] Agent execute failed:", err);
-      return `⚠️ エージェントタスクの送信に失敗しました（${res.status}）。`;
+      const errText = await res.text();
+      console.error(`[bot-query] Agent execute error for ${jobId}:`, errText);
+      return `⚠️ エージェントタスクの実行に失敗しました（${res.status}）。`;
     }
 
     const result = await res.json();
+    const executionName = result.metadata?.name || result.name || "";
+
+    // Log execution (best-effort)
+    try {
+      await ensureSheetExists("execution_logs", [
+        "timestamp", "job_name", "trigger", "status", "detail", "executed_by",
+      ]);
+      await appendRows("execution_logs", [[
+        new Date().toISOString(),
+        "agent-orchestrator",
+        "chat-bridge",
+        "triggered",
+        `Task: ${message.substring(0, 100)} | Execution: ${executionName}`,
+        triggeredBy,
+      ]]);
+    } catch { /* best-effort */ }
+
     return (
       `🤖 *エージェントタスク受付済み*\n` +
       `> タスク: ${message.substring(0, 100)}\n` +
-      `> 実行ID: \`${result.executionName || "starting..."}\`\n\n` +
+      `> 実行ID: \`${executionName || "starting..."}\`\n\n` +
       `自律エージェントが処理を開始しました。完了次第、結果を通知します。`
     );
   } catch (err) {
