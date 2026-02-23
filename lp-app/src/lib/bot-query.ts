@@ -37,7 +37,10 @@ export function classifyCategory(text: string): string {
   return "general";
 }
 
-/** Detect if the message is a question/query (vs a directive/instruction). */
+/** Detect if the message is a question/query (vs a directive/instruction).
+ *  Also catches troubleshooting requests that should NOT trigger job execution.
+ *  e.g. "LP生成で出ているエラーを解消してください" is NOT "run LP generator".
+ */
 export function isQuery(text: string): boolean {
   const lower = text.toLowerCase();
   if (/教えて|知りたい|どう|どの|いくつ|何件|確認|状況|成果|レポート|報告|見せて|まとめ/.test(lower)) return true;
@@ -46,6 +49,8 @@ export function isQuery(text: string): boolean {
   if (/パイプライン|ステータス|最新|直近|今日|今週|結果/.test(lower)) return true;
   if (/今後|改善|課題|傾向|推移|比較/.test(lower)) return true;
   if (/フロー|条件|仕組み|手順|説明|内容|キーポイント|ポイント|整理/.test(lower)) return true;
+  // Troubleshooting / error investigation — never treat as execution command
+  if (/エラー|バグ|不具合|障害|原因|解消|解決|トラブル|失敗|落ちて|止まって|動かない|おかしい/.test(lower)) return true;
   return false;
 }
 
@@ -179,6 +184,12 @@ const AGENT_TASK_PATTERNS: { pattern: RegExp; taskType: string }[] = [
   { pattern: /スケジューラ.*(登録|追加|新規)/, taskType: "schedule_register" },
   { pattern: /(cron|定期).*(登録|設定|追加)/i, taskType: "schedule_register" },
   { pattern: /毎(朝|日|週|晩|夜).*(登録|設定|追加)/, taskType: "schedule_register" },
+  // Error resolution / troubleshooting with action intent
+  // "LP生成で出ているエラーを解消してください" → agent should investigate & fix
+  { pattern: /エラー.*(解消|直して|修正|fix|解決|対応|治して)/i, taskType: "code_fix" },
+  { pattern: /(解消|直して|修正|fix|解決|対応|治して).*エラー/i, taskType: "code_fix" },
+  { pattern: /(バグ|不具合|障害).*(直して|修正|解消|fix|解決|対応)/i, taskType: "code_fix" },
+  { pattern: /(直して|修正|解消|fix|解決|対応).*(バグ|不具合|障害)/i, taskType: "code_fix" },
   // Code fix
   { pattern: /コード.*(修正|直して|変更|更新|fix)/i, taskType: "code_fix" },
   { pattern: /(修正|直して|fix|bug|バグ).*(\.py|\.ts|コード|スクリプト)/i, taskType: "code_fix" },
@@ -197,13 +208,29 @@ const AGENT_TASK_PATTERNS: { pattern: RegExp; taskType: string }[] = [
 /**
  * Detect if the message should be routed to the autonomous agent.
  * Returns null for normal queries / execution commands.
+ *
+ * NOTE: Error resolution patterns (エラー+解消/修正) are checked BEFORE
+ * the isQuery filter, because "LP生成のエラーを解消して" contains both
+ * query keywords (エラー) and action keywords (解消). The action intent
+ * should take priority and route to the agent.
  */
 export function isAgentTask(
   text: string,
 ): { taskType: string } | null {
-  // Never treat queries as agent tasks
-  if (isQuery(text)) return null;
   const lower = text.toLowerCase();
+
+  // Check error-resolution patterns FIRST (before isQuery filter).
+  // These contain both query-like words (エラー) and action words (解消/修正).
+  if (/エラー.*(解消|直して|修正|fix|解決|対応|治して)/i.test(lower) ||
+      /(解消|直して|修正|fix|解決|対応|治して).*エラー/i.test(lower) ||
+      /(バグ|不具合|障害).*(直して|修正|解消|fix|解決|対応)/i.test(lower) ||
+      /(直して|修正|解消|fix|解決|対応).*(バグ|不具合|障害)/i.test(lower)) {
+    return { taskType: "code_fix" };
+  }
+
+  // For all other patterns, queries should NOT be treated as agent tasks.
+  if (isQuery(text)) return null;
+
   for (const { pattern, taskType } of AGENT_TASK_PATTERNS) {
     if (pattern.test(lower)) return { taskType };
   }
