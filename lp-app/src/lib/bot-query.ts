@@ -234,9 +234,6 @@ export async function handleAgentTask(
       },
     ];
 
-    console.log(`[bot-query] Agent execute: url=${url}`);
-    console.log(`[bot-query] Agent execute: envOverrides=${JSON.stringify(envOverrides).substring(0, 200)}`);
-
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -257,12 +254,7 @@ export async function handleAgentTask(
     if (!res.ok) {
       const errText = await res.text();
       console.error(`[bot-query] Agent execute error for ${jobId}:`, errText);
-      const shortErr = errText.substring(0, 300);
-      return (
-        `⚠️ エージェントタスクの実行に失敗しました（${res.status}）。\n` +
-        `URL: \`${url}\`\n` +
-        `\`\`\`\n${shortErr}\n\`\`\``
-      );
+      return `⚠️ エージェントタスクの実行に失敗しました（${res.status}）。`;
     }
 
     const result = await res.json();
