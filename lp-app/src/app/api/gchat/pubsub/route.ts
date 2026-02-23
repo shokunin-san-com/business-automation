@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { getChatAccessToken, getWorkspaceEventsToken } from "@/lib/gcp-auth";
-import { isExecutionCommand, handleDataQuery, handleExecutionCommand } from "@/lib/bot-query";
+import { isExecutionCommand, handleDataQuery, handleExecutionCommand, isAgentTask, handleAgentTask } from "@/lib/bot-query";
 
 /**
  * POST /api/gchat/pubsub
@@ -363,11 +363,14 @@ async function handleWorkspaceEvent(
     `[pubsub/workspace] Processing from ${senderName} in ${spaceName}: "${messageText.substring(0, 50)}"`,
   );
 
-  // Process: execution command > AI (query / directive / settings change)
+  // Process: execution command > agent task > AI (query / directive / settings change)
   let reply: string;
   const execCmd = isExecutionCommand(messageText);
+  const agentCmd = isAgentTask(messageText);
   if (execCmd) {
     reply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, senderName);
+  } else if (agentCmd) {
+    reply = await handleAgentTask(messageText, senderName, "gchat");
   } else {
     // All non-execution messages go through AI (Gemini Pro)
     reply = await handleDataQuery(messageText);

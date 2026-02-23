@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import traceback
@@ -36,12 +37,23 @@ from agent.tools.scheduler_client import (
 )
 from agent.tools.sheets_reader import read_sheet, list_sheets
 from agent.tools.job_runner import run_job, get_execution_status
+from agent.tools.github_client import (
+    get_file as github_get_file,
+    update_file as github_update_file,
+    create_pull_request,
+)
+from agent.tools.scheduler_manager import (
+    register as register_schedule,
+    delete_schedule,
+)
+from agent.tools.cloudbuild_client import trigger_build
 
 logger = get_logger("agent.orchestrator")
 
 # ── Tool dispatch map ──
 # Maps tool name → callable function
 TOOL_DISPATCH = {
+    # Existing tools
     "read_logs": read_logs,
     "list_scheduler_jobs": list_jobs,
     "pause_scheduler_job": pause_job,
@@ -51,6 +63,16 @@ TOOL_DISPATCH = {
     "list_sheets": list_sheets,
     "run_pipeline_job": run_job,
     "get_execution_status": get_execution_status,
+    # GitHub tools
+    "get_github_file": github_get_file,
+    "update_github_file": github_update_file,
+    "create_pull_request": create_pull_request,
+    # Cloud Build tool
+    "trigger_cloud_build": trigger_build,
+    # Scheduler management tools
+    "register_schedule": register_schedule,
+    "list_schedules": list_jobs,       # alias — same underlying function
+    "delete_schedule": delete_schedule,
 }
 
 DEFAULT_TASK = (
@@ -497,15 +519,31 @@ def main():
         healthy = run_with_verification()
         sys.exit(0 if healthy else 1)
 
-    # Run the agent
-    task = args.task if args.task else DEFAULT_TASK
+    # Run the agent — priority: AGENT_TASK env > --task arg > DEFAULT_TASK
+    agent_task_env = os.environ.get("AGENT_TASK", "")
+    agent_context_env = os.environ.get("AGENT_CONTEXT", "")
+
+    if agent_task_env:
+        from agent.task_router import route_task
+        task, max_turns = route_task(agent_task_env, agent_context_env)
+        # Allow explicit --max-turns to override router's suggestion
+        if args.max_turns != 15:
+            max_turns = args.max_turns
+        logger.info("AGENT_TASK from env: %s", agent_task_env[:200])
+    elif args.task:
+        task = args.task
+        max_turns = args.max_turns
+    else:
+        task = DEFAULT_TASK
+        max_turns = args.max_turns
+
     start_time = time.time()
 
     logger.info("=" * 60)
     logger.info("MarketProbe Agent — Starting")
     logger.info("=" * 60)
 
-    result, turns_used, tool_calls_count = run_agent(task=task, max_turns=args.max_turns)
+    result, turns_used, tool_calls_count = run_agent(task=task, max_turns=max_turns)
 
     elapsed = time.time() - start_time
     logger.info("=" * 60)

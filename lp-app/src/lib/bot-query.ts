@@ -168,6 +168,96 @@ export async function handleExecutionCommand(
 }
 
 // ---------------------------------------------------------------------------
+// Agent task detection — routes to autonomous agent via /api/agent/execute
+// ---------------------------------------------------------------------------
+
+/** Patterns that indicate the message should be routed to the autonomous agent */
+const AGENT_TASK_PATTERNS: { pattern: RegExp; taskType: string }[] = [
+  // Schedule registration
+  { pattern: /スケジュール.*(登録|追加|作成|設定)/, taskType: "schedule_register" },
+  { pattern: /(登録|追加|作成|設定).*スケジュール/, taskType: "schedule_register" },
+  { pattern: /スケジューラ.*(登録|追加|新規)/, taskType: "schedule_register" },
+  { pattern: /(cron|定期).*(登録|設定|追加)/i, taskType: "schedule_register" },
+  { pattern: /毎(朝|日|週|晩|夜).*(登録|設定|追加)/, taskType: "schedule_register" },
+  // Code fix
+  { pattern: /コード.*(修正|直して|変更|更新|fix)/i, taskType: "code_fix" },
+  { pattern: /(修正|直して|fix|bug|バグ).*(\.py|\.ts|コード|スクリプト)/i, taskType: "code_fix" },
+  { pattern: /(\.py|\.ts|\.js).*(修正|直して|変更|更新)/, taskType: "code_fix" },
+  // Code read
+  { pattern: /コード.*(確認|見て|読んで|見せて|チェック)/, taskType: "code_read" },
+  { pattern: /(ファイル|ソース).*(確認|見て|読んで|チェック)/, taskType: "code_read" },
+  // Health check via agent
+  { pattern: /エージェント.*(巡回|チェック|確認|診断)/, taskType: "health_check" },
+  { pattern: /(深い|詳細|徹底).*(チェック|確認|調査)/, taskType: "health_check" },
+  // Explicit agent invocation
+  { pattern: /エージェント(で|に|を使って|経由)/, taskType: "general" },
+  { pattern: /^agent\s+/i, taskType: "general" },
+];
+
+/**
+ * Detect if the message should be routed to the autonomous agent.
+ * Returns null for normal queries / execution commands.
+ */
+export function isAgentTask(
+  text: string,
+): { taskType: string } | null {
+  // Never treat queries as agent tasks
+  if (isQuery(text)) return null;
+  const lower = text.toLowerCase();
+  for (const { pattern, taskType } of AGENT_TASK_PATTERNS) {
+    if (pattern.test(lower)) return { taskType };
+  }
+  return null;
+}
+
+/**
+ * Submit a task to the autonomous agent via /api/agent/execute.
+ * Returns a user-facing status message.
+ */
+export async function handleAgentTask(
+  message: string,
+  triggeredBy: string,
+  source: string,
+): Promise<string> {
+  try {
+    const baseUrl =
+      process.env.NEXT_PUBLIC_BASE_URL ||
+      (process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : "http://localhost:3000");
+
+    const res = await fetch(`${baseUrl}/api/agent/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: message,
+        context: {
+          triggered_by: triggeredBy,
+          source,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Unknown error" }));
+      console.error("[bot-query] Agent execute failed:", err);
+      return `⚠️ エージェントタスクの送信に失敗しました（${res.status}）。`;
+    }
+
+    const result = await res.json();
+    return (
+      `🤖 *エージェントタスク受付済み*\n` +
+      `> タスク: ${message.substring(0, 100)}\n` +
+      `> 実行ID: \`${result.executionName || "starting..."}\`\n\n` +
+      `自律エージェントが処理を開始しました。完了次第、結果を通知します。`
+    );
+  } catch (err) {
+    console.error("[bot-query] Error submitting agent task:", err);
+    return "⚠️ エージェントタスクの送信中にエラーが発生しました。";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Settings auto-update from AI response
 // ---------------------------------------------------------------------------
 

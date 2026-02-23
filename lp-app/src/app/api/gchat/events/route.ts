@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isExecutionCommand, handleExecutionCommand, handleDataQuery } from "@/lib/bot-query";
+import { isExecutionCommand, handleExecutionCommand, handleDataQuery, isAgentTask, handleAgentTask } from "@/lib/bot-query";
 
 // Vercel max duration: give enough time for Gemini Pro to respond
 export const maxDuration = 120;
@@ -79,11 +79,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Execution command check (e.g. "市場調査を実行して")
+      // Execution command > agent task > AI (Gemini Pro)
       const execCmd = isExecutionCommand(messageText);
       if (execCmd) {
         const execReply = await handleExecutionCommand(execCmd.scriptId, execCmd.label, "gchat_user");
         return addonResponse(execReply);
+      }
+      const agentCmd = isAgentTask(messageText);
+      if (agentCmd) {
+        const agentReply = await handleAgentTask(messageText, "gchat_user", "gchat");
+        return addonResponse(agentReply);
       }
 
       // All other messages go through AI (Gemini Pro) — handles queries, directives, settings changes
@@ -154,11 +159,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Execution command check (e.g. "市場調査を実行して")
+    // Execution command > agent task > AI (Gemini Pro)
     const legacyExecCmd = isExecutionCommand(messageText);
     if (legacyExecCmd) {
       const execReply = await handleExecutionCommand(legacyExecCmd.scriptId, legacyExecCmd.label, "gchat_user");
       return legacyResponse(execReply);
+    }
+    const legacyAgentCmd = isAgentTask(messageText);
+    if (legacyAgentCmd) {
+      const agentReply = await handleAgentTask(messageText, "gchat_user", "gchat");
+      return legacyResponse(agentReply);
     }
 
     // All other messages go through AI (Gemini Pro)

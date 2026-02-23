@@ -1,0 +1,5 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/marketprobe-automation/marketprobe-agent', '-f', 'Dockerfile.agent', '.']
+images:
+  - 'gcr.io/marketprobe-automation/marketprobe-agent'

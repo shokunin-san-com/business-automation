@@ -1,0 +1,16 @@
+# MarketProbe Agent — Lightweight container for autonomous pipeline management
+# No Playwright needed — agent only uses APIs (Cloud Logging, Scheduler, Sheets, Run)
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install agent-specific dependencies
+COPY requirements-agent.txt .
+RUN pip install --no-cache-dir -r requirements-agent.txt
+
+# Copy agent code
+COPY agent/ agent/
+
+# Default entrypoint: run orchestrator
+CMD ["python", "-m", "agent.orchestrator"]
