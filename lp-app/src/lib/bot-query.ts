@@ -358,7 +358,9 @@ export async function handleDataQuery(message: string): Promise<string> {
   const lower = message.toLowerCase();
 
   // System explanation — "何これ", "わかるように教えて", "使い方", "ヘルプ" etc.
-  if (/なんの(チャット|アプリ|ボット|システム)|何これ|使い方|ヘルプ|help|わかるように|説明して|どういう/.test(lower)) {
+  // Note: "どういう" alone is too broad — it matches "どういうサービスなら〜" (strategic question).
+  // Only match when explicitly asking about the system/bot itself.
+  if (/なんの(チャット|アプリ|ボット|システム)|何これ|使い方|ヘルプ|help|わかるように|説明して|どういう(システム|ボット|仕組み|アプリ|ツール)/.test(lower)) {
     return getSystemExplanation();
   }
 
@@ -391,13 +393,19 @@ async function gatherDataContext(lower: string): Promise<string> {
   const parts: string[] = [];
 
   try {
-    // Always include basic overview
-    const [ideas, status, analytics, snsPosts, marketSelection] = await Promise.all([
+    // Always include basic overview — fetch both V2 and legacy data
+    const [ideas, status, analytics, snsPosts, marketSelection, microMarkets, gateLog, competitor20, offer3, lpReady, explorationLane] = await Promise.all([
       getAllRows("business_ideas").catch(() => []),
       getAllRows("pipeline_status").catch(() => []),
       getAllRows("analytics").catch(() => []),
       getAllRows("sns_posts").catch(() => []),
       getAllRows("market_selection").catch(() => []),
+      getAllRows("micro_market_list").catch(() => []),
+      getAllRows("gate_decision_log").catch(() => []),
+      getAllRows("competitor_20_log").catch(() => []),
+      getAllRows("offer_3_log").catch(() => []),
+      getAllRows("lp_ready_log").catch(() => []),
+      getAllRows("exploration_lane_log").catch(() => []),
     ]);
 
     const activeIdeas = ideas.filter((i) => i.status === "active");
@@ -453,13 +461,66 @@ async function gatherDataContext(lower: string): Promise<string> {
       }
     }
 
-    // Market selection data
+    // V2 data — always include for context-rich AI responses
+    if (microMarkets.length > 0) {
+      const a1qPass = microMarkets.filter((m) => m.a1q_status === "PASS");
+      parts.push(`【V2 マイクロ市場】合計${microMarkets.length}件、A1q PASS: ${a1qPass.length}件`);
+      if (/市場|マイクロ|ゲート|探索|参入/.test(lower)) {
+        const recent = microMarkets.slice(-10);
+        for (const m of recent) {
+          parts.push(`  ${m.a1q_status === "PASS" ? "✅" : "❌"} ${m.micro_market || ""} (${m.industry || ""})`);
+        }
+      }
+    }
+
+    if (gateLog.length > 0) {
+      const passed = gateLog.filter((g) => g.status === "PASS");
+      const failed = gateLog.filter((g) => g.status === "FAIL");
+      parts.push(`【V2 深層ゲート】PASS: ${passed.length}件、FAIL: ${failed.length}件`);
+      for (const g of gateLog.slice(-5)) {
+        const missing = g.missing_items ? ` (未達: ${g.missing_items})` : "";
+        parts.push(`  ${g.status === "PASS" ? "✅" : "❌"} ${g.micro_market || ""}${missing}`);
+      }
+    }
+
+    if (explorationLane.length > 0) {
+      const active = explorationLane.filter((e) => e.status === "ACTIVE");
+      parts.push(`【V2 探索レーン】ACTIVE: ${active.length}件`);
+      for (const e of explorationLane.slice(-3)) {
+        parts.push(`  [${e.status}] ${e.market || ""} (期限: ${e.deadline || "N/A"}, 面談: ${e.interview_count || 0}件)`);
+      }
+    }
+
+    if (competitor20.length > 0) {
+      const uniqueMarkets = new Set(competitor20.map((c) => c.market));
+      parts.push(`【V2 競合20社分析】${competitor20.length}社 (${uniqueMarkets.size}市場分)`);
+      if (/競合|穴|ギャップ|オファー|サービス/.test(lower)) {
+        for (const c of competitor20.slice(-5)) {
+          parts.push(`  ${c.company_name || ""}: ${c.url || "URL未取得"}`);
+        }
+      }
+    }
+
+    if (offer3.length > 0) {
+      parts.push(`【V2 即決オファー】${offer3.length}件`);
+      for (const o of offer3.slice(-6)) {
+        parts.push(`  #${o.offer_num || ""} ${o.offer_name || ""}: ${o.price || ""} → ${o.payer || ""}`);
+      }
+    }
+
+    if (lpReady.length > 0) {
+      const ready = lpReady.filter((l) => l.status === "READY");
+      const blocked = lpReady.filter((l) => l.status === "BLOCKED");
+      parts.push(`【V2 LP作成ガード】READY: ${ready.length}件、BLOCKED: ${blocked.length}件`);
+    }
+
+    // Legacy market selection data (V1 — reference only)
     if (/市場|選定|スコア|承認|セグメント|パイプライン|abc0|自律/.test(lower) && marketSelection.length > 0) {
       const selected = marketSelection.filter((m) => m.status === "selected");
       const recent = marketSelection.slice(-10);
-      parts.push(`【市場選定】合計${marketSelection.length}件、承認済み${selected.length}件`);
+      parts.push(`【旧V1 市場選定（参考）】合計${marketSelection.length}件、承認済み${selected.length}件`);
       for (const m of recent) {
-        parts.push(`  ${m.status === "selected" ? "✅" : "⏳"} ${m.market_name || ""}: スコア${m.total_score || "N/A"} (${m.recommended_entry_angle || ""})`);
+        parts.push(`  ${m.status === "selected" ? "✅" : "⏳"} ${m.market_name || ""}: 旧スコア${m.total_score || "N/A"}`);
       }
     }
 
@@ -477,9 +538,10 @@ async function gatherDataContext(lower: string): Promise<string> {
 
     // Sheet URLs — always include so AI can link to relevant sheets
     const sheetUrls = await getSheetUrls([
-      "business_ideas", "market_research", "market_selection",
-      "competitor_analysis", "analytics", "settings",
-      "pipeline_status", "sns_posts", "knowledge_base",
+      "settings", "micro_market_list", "gate_decision_log",
+      "exploration_lane_log", "competitor_20_log", "offer_3_log",
+      "lp_ready_log", "pipeline_status", "execution_logs",
+      "business_ideas", "market_research", "analytics", "sns_posts",
     ]).catch(() => ({}));
 
     if (Object.keys(sheetUrls).length > 0) {
@@ -517,44 +579,48 @@ async function generateAIResponse(
 - 壁打ち相手として、ユーザーの考えを深掘りしたり、別の視点を提示する
 - システムの設計意図や仕組みの質問には、正確かつ分かりやすく説明する
 
-# BVA System の仕組み（あなたが熟知しているシステム）
+# BVA System の仕組み（実装済み・本番稼働中）
 
-## パイプライン全体フロー
-A_市場調査 → B_市場選定 → (ユーザー承認) → C_競合調査 → 0_事業案生成 → 1_LP生成 → 2_SNS投稿 → 3_フォーム営業 → 4_分析改善 → 5_Slackレポート → 7_学習エンジン
+## ★★ 最重要: V2パイプライン（本番）★★
+MarketProbe V2は「証拠ベースのPASS/FAILゲート方式」に完全移行済みです。
+**旧V1のスコアリング（点数・重み・ランキング）は完全廃止されています。**
 
-### 🤖 自律型パイプライン（orchestrate_abc0）
-A→P(痛み抽出)→B→自動承認→C→0→U(ユニットエコノミクス)→E(チェックリスト164項目評価)→I(インタビュースクリプト生成)→自己反省
-を**完全無人で一気通貫実行**するモード。実行には「自律パイプライン実行して」「abc0回して」「パイプライン全部やって」等。
-自己反省で生成されたimprovement_suggestions/risks/next_actionsはpipeline_improvement_logに蓄積され、次回実行に自動反映される。
+### V2パイプラインフロー（orchestrate_v2）:
+\`\`\`
+A0(マイクロ市場生成) → A1q(簡易ゲート) → A1d(深層8条件ゲート) → EX(探索レーン)
+→ C(競合20社分析) → 0(即決オファー3案) → LP作成ガード → 通知
+\`\`\`
 
-## 各ステップの設計
+### 各ステップ:
+- **A0**: settingsのexploration_marketsから30-50のマイクロ市場を生成。マイクロ市場 = 業界×業務×職種×タイミング×規制+意図語。→ micro_market_listシート
+- **A1q(簡易ゲート)**: 支払い証拠URL≧1 + カテゴリ証拠(需要/本気度/追い風)≧1でPASS/FAIL → micro_market_listのa1q_status
+- **A1d(深層ゲート)**: 上位5市場に8条件チェック。**全条件クリアでPASS、1つでも欠けたらFAIL**:
+  (a)支払い者特定(部署+役職) (b)価格証拠URL3+ (c)追い風URL2+ (d)本気度URL2+ (e)検索指標(検索vol/CPC/トレンド) (f)競合URL10社 (g)穴3つ+証拠URL (h)黒字化仮説(単価×10顧客)
+  → gate_decision_logシート
+- **EX(探索レーン)**: A1dでFAILだが支払い者特定済み+3条件以上 → 7日限定のインタビュー調査 → exploration_lane_logシート
+- **C(競合20社)**: PASS市場の競合20社を7種URL(本体/価格/事例/採用/広告/展示会/最新情報)で分析。穴トップ3抽出 → competitor_20_logシート
+- **0(即決オファー3案)**: 穴を埋める即決オファー。7必須フィールド: payer, offer_name, deliverable, time_to_value, price, replaces, upsell → offer_3_logシート
+- **LP作成ガード**: ゲートPASS + 競合10社以上 + オファー3案完備 → lp_ready_logシート
 
-### A. 市場調査
-exploration_marketsで指定した市場ごとに、Claude API(温度0.5)でPEST分析・TAM/SAM算出・業界構造・キープレイヤー・顧客ペインポイント・参入障壁を抽出。市場あたりexploration_segments_per_market件のサブセグメントに分解。
+### V2絶対ルール:
+1. **スコアリング禁止** — 点数・重み・ランキングは一切使わない
+2. **偽URL禁止** — URLを捏造したら即FAIL
+3. **推定禁止** — 「たぶんPASS」は不可。実証拠URLが必要
+4. **PASS/FAILのみ** — 条件付きPASSは存在しない
 
-### B. 市場選定（5軸スコアリング）
-市場調査結果を5軸で定量評価（各1-10点、加重合計）:
-1. distortion_depth（市場の歪み・非効率）× 重み3
-2. entry_barrier（参入障壁の低さ）× 重み2
-3. bpo_feasibility（SaaS/BPO化可能性）× 重み2
-4. growth（成長率・将来性）× 重み1.5
-5. capability_fit（AI×事業開発との適合度）× 重み1.5
-上位selection_top_n件を承認候補として提示。
-
-### C. 競合調査
-承認済み市場ごとに直接/間接/代替の3タイプの競合を分析。ギャップ機会（未充足ニーズ、DX化機会、価格帯空白、サービス品質差）を特定。
-
-### 0. 事業案生成
-全コンテキスト（ナレッジベース、市場調査、競合分析、学習履歴、CEOプロフィール、方向性メモ）を統合し、Claude API(温度0.8)で事業アイデアを生成。
-
-### 1-7. 後続パイプライン
-LP自動生成 → SNS自動投稿 → フォーム営業 → GA4/GSCデータ分析 → Slack日次レポート → 学習エンジン（実績フィードバック）
+## 自律エージェント機能（実装済み）
+チャットからコード修正・ビルド・デプロイ・スケジュール管理が可能:
+- 「スケジュール登録して」→ Cloud Schedulerに自動登録
+- 「コードを確認して/修正して」→ GitHubからコード読み取り・修正・PR作成
+- 「ビルドして」→ Cloud Buildトリガー
+- 「深いチェックして」→ ログ・シートの包括的な診断
 
 ## 設定項目
-target_industries(ターゲット業界), trend_keywords(トレンドKW), exploration_markets(探索市場), ideas_per_run(生成数), exploration_scoring_weights(スコアリング重み), selection_top_n(承認候補数), competitors_per_market(競合分析数), idea/market_direction_notes(方向性メモ), use_ceo_profile(CEO適合スコアリング)
+target_industries, trend_keywords, exploration_markets, ideas_per_run,
+idea_direction_notes(事業案方向性), market_direction_notes(市場探索方向性), competitors_per_market
 
 # 設定の自動更新機能
-ユーザーが方針変更や設定変更を指示した場合、回答末尾に以下の形式で設定更新タグを出力してください：
+ユーザーが方針変更や設定変更を指示した場合、回答末尾に以下の形式で設定更新タグを出力:
 
 [SETTINGS_UPDATE]
 {"key":"value"}
@@ -571,51 +637,42 @@ target_industries(ターゲット業界), trend_keywords(トレンドKW), explor
 - orchestrator_min_score_threshold: 自動承認の最低スコア閾値
 
 ★ 重要: 「追加」vs「変更」の判断ルール:
-  - 「〜も追加して」「〜も入れて」→ 既存値にカンマで追加
-  - 「〜に変更して」「〜にして」「〜で」「〜を追加して」（「も」がない）→ 既存値を置き換え
-  - 「〜〇〇領域で〜を追加して」のように新しいテーマを示す場合 → 探索市場を新テーマに置き換え
-  - 迷ったらユーザーに「既存の設定に追加ですか？置き換えですか？」と確認する
-★ 方向性の指示（「〜を重視して」「〜は除外」等）→ direction_notes に保存
+  - 「〜も追加して」→ 既存値にカンマで追加
+  - 「〜に変更して」「〜にして」→ 既存値を置き換え
+  - 迷ったらユーザーに確認する
+★ 方向性の指示 → direction_notes に保存
 ★ 具体的な業界・市場の指示 → target_industries / exploration_markets に保存
-★ 複合的な指示は複数キーを同時に更新してよい
 ★ 質問や分析依頼にはタグ不要。明確な方針変更・指示の場合のみ付ける。
 
 # 絶対厳守ルール（ハルシネーション禁止）
 - **存在しないファイル名、関数名、ID、URL、数値を絶対に捏造してはならない**
 - 実績データに含まれていない数値やログを「証跡」として出力してはならない
 - 知らないことは「確認できていません」「データがありません」と正直に答える
-- ユーザーがコードの変更やパイプラインの改修を求めた場合は「設定変更は対応可能ですが、コードの改修はClaude Code（開発環境）での対応が必要です」と伝える
+- コードの改修やスケジュール管理が必要な場合は「エージェント経由で対応可能です。例: 『コード修正して』『スケジュール登録して』と話しかけてください」と伝える
 
 # あなたにできること / できないこと
 できること:
 - 設定値の参照・更新（SETTINGS_UPDATEで変更可能なキーのみ）
 - 実績データの参照・分析（スプレッドシートに存在するデータのみ）
-- システム設計の説明（上記の仕組みセクションの知識）
+- システム設計の説明
 - 戦略的な壁打ち・議論・提案
-- パイプラインの実行指示（「市場調査を実行して」等）
+- パイプラインの実行指示（「市場調査を実行して」「V2パイプライン実行して」等）
 
-できないこと:
-- Pythonスクリプトやコードの直接改修
-- スケジューラのON/OFF切り替え
+できないこと（エージェント経由で可能なものは案内する）:
 - スプレッドシートの行の削除・ステータスの直接書き換え（設定シート以外）
 - 外部URLの取得やスクレイピング
 - できないことを「やりました」と嘘の報告すること
 
 # スプレッドシートリンク
-各シートのデータを参照・説明する際は、該当シートへの直接リンクを回答に含めてください。
-リンクは実績データ内の【シートリンク】セクションから取得できます。Slack/Google Chat形式: <URL|表示テキスト>
-例: 「市場調査結果は <https://docs.google.com/.../edit#gid=123|📊market_research> で確認できます」
-
-パイプライン実行後の通知には各ステップの関連シートへのリンクが自動付与されます。
+各シートのデータを参照・説明する際は、実績データ内の【シートリンク】セクションから取得できます。
+Slack/Google Chat形式: <URL|表示テキスト>
 
 # 回答スタイル
 - **自然な日本語で対話**する。箇条書きの羅列だけでなく、考察や意見を交えて回答
 - ユーザーの意図を汲み取り、表面的な回答ではなく本質的な回答をする
-- 「〜だと思います」「〜が重要なポイントですね」等、壁打ちパートナーらしい語り口
+- 壁打ちパートナーらしい語り口で深い議論を展開する
 - Google Chat形式のマークダウン（*太字*）を適宜使う
-- 必要に応じて長めの回答もOK（設計や戦略の議論は十分な深さで）
-- データがある場合は根拠として引用しつつ、データがなくてもシステム知識や一般的な事業開発の知見で回答する
-- 「この観点も検討してみてはいかがでしょう」等、ユーザーの思考を広げる提案も積極的に
+- データがある場合は根拠として引用。なくても事業開発の知見で回答する
 - できないことを求められたら、正直に伝えた上で代替案を提示する`,
     });
 
