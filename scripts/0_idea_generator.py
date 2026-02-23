@@ -1,10 +1,15 @@
 """
-0_idea_generator.py — Auto-generate business ideas using Claude API.
+0_idea_generator.py — V2: Instant-decision offer generation (3 offers).
 
-Reads target industries/keywords from Google Sheets settings,
-generates ideas via Claude, saves as draft to Sheets,
-writes pending_ideas.json for dashboard, and notifies Slack with approval buttons.
+Reads gap_top3 from competitor_20_log, generates 3 offers
+with 7 mandatory fields each. Outputs to offer_3_log sheet.
+
+All scoring (ceo_fit_score etc.) is **prohibited**.
+Format deficiency → up to 3 retries. 3 failures → error stop.
+
+Schedule: triggered by orchestrate_v2.py after competitor analysis
 """
+from __future__ import annotations
 
 import json
 import sys
@@ -14,186 +19,267 @@ from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import TEMPLATES_DIR, GOOGLE_SHEETS_ID, DATA_DIR, get_logger
-from utils.claude_client import generate_json
-from utils.sheets_client import (
-    get_all_rows,
-    append_rows,
-    get_spreadsheet,
-)
-from utils.slack_notifier import send_idea_approval_request
+from config import TEMPLATES_DIR, DATA_DIR, get_logger
+from utils.claude_client import generate_json_with_retry
+from utils.sheets_client import get_all_rows, append_rows
+from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.pdf_knowledge import get_knowledge_summary
-from utils.exploration_context import get_exploration_context
 from utils.learning_engine import get_learning_context
-from utils.ceo_profile import get_ceo_profile_context
+from utils.validators import validate_offer_3
 
 logger = get_logger("idea_generator", "idea_generator.log")
-
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
-PENDING_IDEAS_FILE = DATA_DIR / "pending_ideas.json"
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _load_settings() -> dict:
-    """Load key-value settings from the 'settings' sheet."""
     rows = get_all_rows("settings")
     return {r["key"]: r["value"] for r in rows}
 
 
-def _make_slug(name: str) -> str:
-    """Create a URL-safe slug from a Japanese business name."""
-    import re
+def _get_competitor_data(run_id: str | None = None) -> tuple[list[dict], list[dict], str]:
+    """Get competitor data and gap_top3 from competitor_20_log.
 
-    slug = name.lower().strip()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s]+", "-", slug)
-    slug = slug.strip("-")
-    if not slug or not any(c.isalnum() for c in slug):
-        slug = f"idea-{abs(hash(name)) % 100000:05d}"
-    return slug
-
-
-def generate_ideas() -> list[dict]:
-    """Generate business ideas using Claude API."""
-    settings = _load_settings()
-
-    target_industries = settings.get("target_industries", "IT,エネルギー")
-    trend_keywords = settings.get("trend_keywords", "AI,DX")
-    num_ideas = int(settings.get("ideas_per_run", "3"))
-
-    # Load knowledge base context (if available)
-    knowledge_context = get_knowledge_summary()
-
-    # Load exploration context (market research + competitor gaps)
-    exploration_context = get_exploration_context()
-
-    # Load learning context (AI insights + human directives)
-    learning_context = get_learning_context(categories=["idea_generation"])
-
-    # Load CEO profile context (if enabled)
-    ceo_profile_context = get_ceo_profile_context()
-
-    # Load strategic direction notes
-    idea_direction_notes = settings.get("idea_direction_notes", "")
-
-    template = jinja_env.get_template("idea_gen_prompt.j2")
-    prompt = template.render(
-        target_industries=target_industries,
-        trend_keywords=trend_keywords,
-        num_ideas=num_ideas,
-        knowledge_context=knowledge_context,
-        exploration_context=exploration_context,
-        learning_context=learning_context,
-        ceo_profile_context=ceo_profile_context,
-        idea_direction_notes=idea_direction_notes,
-    )
-
-    logger.info(f"Generating {num_ideas} business ideas...")
-    ideas = generate_json(
-        prompt=prompt,
-        system="あなたは日本市場に精通した事業戦略コンサルタントです。",
-        max_tokens=4096,
-        temperature=0.8,
-    )
-
-    if not isinstance(ideas, list):
-        raise ValueError(f"Expected a list from Claude, got: {type(ideas)}")
-
-    logger.info(f"Generated {len(ideas)} ideas")
-    return ideas
-
-
-def save_ideas_to_sheets(ideas: list[dict]) -> list[dict]:
-    """Append generated ideas to business_ideas sheet as 'draft'.
-
-    Returns list of saved ideas with their slugs/ids.
+    Returns: (competitors, gap_top3, market_name)
     """
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    rows = []
-    saved_ideas = []
+    try:
+        rows = get_all_rows("competitor_20_log")
+        if run_id:
+            rows = [r for r in rows if r.get("run_id") == run_id]
+        if not rows:
+            return [], [], ""
 
-    for idea in ideas:
-        slug = _make_slug(idea["name"])
+        market_name = rows[0].get("market", "")
+        return rows, [], market_name  # gap_top3 is stored separately
+    except Exception:
+        return [], [], ""
+
+
+def _get_gate_result(run_id: str | None = None) -> dict:
+    """Get gate result with payer info for the offer prompt context."""
+    try:
+        rows = get_all_rows("gate_decision_log")
+        if run_id:
+            rows = [r for r in rows if r.get("run_id") == run_id]
+        pass_rows = [r for r in rows if r.get("status") == "PASS"]
+        if pass_rows:
+            return pass_rows[-1]
+    except Exception:
+        pass
+    return {}
+
+
+def _already_generated(run_id: str) -> bool:
+    """Check if offers already exist for this run."""
+    try:
+        rows = get_all_rows("offer_3_log")
+        return any(r.get("run_id") == run_id for r in rows)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Core offer generation
+# ---------------------------------------------------------------------------
+
+def generate_offers(
+    gap_top3: list[dict],
+    gate_result: dict,
+    micro_market: dict,
+    knowledge_context: str,
+    learning_context: str,
+    run_id: str,
+) -> list[dict]:
+    """Generate 3 instant-decision offers from gap analysis.
+
+    Uses generate_json_with_retry with validate_offer_3.
+    3 retries max — 3 failures = error stop (do NOT proceed with incomplete data).
+    """
+    template = jinja_env.get_template("offer_3_prompt.j2")
+    prompt = template.render(
+        micro_market_json=json.dumps(micro_market, ensure_ascii=False),
+        gap_top3_json=json.dumps(gap_top3, ensure_ascii=False),
+        gate_result_json=json.dumps(gate_result, ensure_ascii=False),
+        knowledge_context=knowledge_context,
+        learning_context=learning_context,
+    )
+
+    result = generate_json_with_retry(
+        prompt=prompt,
+        system=(
+            "あなたは事業開発の専門家です。"
+            "スコアを出すな。7つの必須フィールドを全て埋めること。"
+            "架空の数値は禁止。必ず3案をJSON配列で出力すること。"
+        ),
+        max_tokens=8192,
+        temperature=0.5,
+        max_retries=3,
+        validator=validate_offer_3,
+    )
+
+    if isinstance(result, dict):
+        result = [result]
+
+    # Strict check: if validation still fails after 3 retries, error stop
+    vr = validate_offer_3(result)
+    if not vr.valid:
+        raise ValueError(
+            f"オファー生成が3回リトライ後も不完全です。"
+            f"エラー: {vr.errors}。不完全なまま進めません。"
+        )
+
+    return result
+
+
+def save_offers_to_sheets(offers: list[dict], run_id: str) -> int:
+    """Save 3 offers to offer_3_log sheet."""
+    rows: list[list] = []
+
+    for offer in offers:
         rows.append([
-            slug,                              # id
-            idea["name"],                      # name
-            idea.get("category", ""),          # category
-            idea.get("description", ""),       # description
-            idea.get("target_audience", ""),   # target_audience
-            "draft",                           # status
-            "",                                # lp_url
-            "auto",                            # source
-            idea.get("market_size", ""),        # market_size
-            idea.get("differentiator", ""),     # differentiator
-            now,                               # created_at
-            idea.get("ceo_fit_score", ""),      # ceo_fit_score
-            idea.get("ceo_fit_reason", ""),     # ceo_fit_reason
+            run_id,
+            offer.get("offer_num", ""),
+            offer.get("payer", ""),
+            offer.get("offer_name", ""),
+            offer.get("deliverable", ""),
+            offer.get("time_to_value", ""),
+            offer.get("price", ""),
+            offer.get("replaces", ""),
+            offer.get("upsell", ""),
         ])
-        saved_ideas.append({
-            "id": slug,
-            "name": idea["name"],
-            "category": idea.get("category", ""),
-            "description": idea.get("description", ""),
-            "target_audience": idea.get("target_audience", ""),
-            "created_at": now,
-        })
 
-    append_rows("business_ideas", rows)
-    logger.info(f"Saved {len(rows)} ideas to Google Sheets (status=draft)")
-    return saved_ideas
+    if rows:
+        append_rows("offer_3_log", rows)
+    return len(rows)
 
 
-def write_pending_ideas(ideas: list[dict]) -> None:
-    """Write pending ideas to JSON file for dashboard display."""
-    # Merge with any existing pending ideas
-    existing = []
-    if PENDING_IDEAS_FILE.exists():
-        try:
-            existing = json.loads(PENDING_IDEAS_FILE.read_text("utf-8"))
-        except (json.JSONDecodeError, IOError):
-            existing = []
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
-    existing_ids = {i["id"] for i in existing}
-    for idea in ideas:
-        if idea["id"] not in existing_ids:
-            existing.append(idea)
+def main(run_id: str | None = None):
+    """
+    V2 Offer Generator: 3 instant-decision offers from competitor gaps.
 
-    PENDING_IDEAS_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), "utf-8")
-    logger.info(f"Wrote {len(existing)} pending ideas to {PENDING_IDEAS_FILE}")
-
-
-def notify_slack(ideas: list[dict]) -> None:
-    """Send Slack notifications with approval buttons for each idea."""
-    dashboard_url = "https://lp-app-pi.vercel.app/dashboard"
-
-    for idea in ideas:
-        send_idea_approval_request(idea, dashboard_url)
-
-    logger.info(f"Sent {len(ideas)} Slack approval requests")
-
-
-def main():
-    logger.info("=== Idea generator start ===")
-    update_status("0_idea_generator", "running", "事業案を生成中...")
+    Can be called standalone or from orchestrate_v2.py with a shared run_id.
+    """
+    logger.info("=== V2 Offer generator start ===")
+    update_status("0_idea_generator", "running", "V2オファー生成を開始...")
 
     try:
-        ideas = generate_ideas()
-        saved_ideas = save_ideas_to_sheets(ideas)
+        knowledge_context = get_knowledge_summary()
+        learning_context = get_learning_context(categories=["idea_generation"])
 
-        # Write pending ideas for dashboard
-        write_pending_ideas(saved_ideas)
+        # Get competitor data for this run
+        competitors, _, market_name = _get_competitor_data(run_id)
+        if not competitors:
+            msg = "competitor_20_logにデータなし。競合分析が先に必要です"
+            logger.info(msg)
+            update_status("0_idea_generator", "success", msg,
+                          {"offers_generated": 0})
+            return {"offers": []}
 
-        # Send Slack notifications with approval buttons
-        notify_slack(saved_ideas)
+        effective_run_id = run_id or competitors[0].get("run_id", "")
 
-        count = len(saved_ideas)
-        update_status("0_idea_generator", "success", f"{count}件生成", {"ideas_generated": count})
-        logger.info("=== Idea generator complete ===")
+        # Skip if already generated
+        if effective_run_id and _already_generated(effective_run_id):
+            msg = f"run_id={effective_run_id[:8]} はオファー生成済み。スキップ"
+            logger.info(msg)
+            update_status("0_idea_generator", "success", msg)
+            return {"offers": []}
+
+        # Get gap_top3 — this was stored in orchestrate_v2 context
+        # or we need to parse from competitor analysis result
+        # For standalone execution, we reconstruct from competitors
+        gap_top3 = _extract_gap_top3_from_context(effective_run_id, competitors)
+
+        # Get gate result for payer info
+        gate_result = _get_gate_result(effective_run_id)
+
+        micro_market = {
+            "micro_market": market_name,
+            "payer": gate_result.get("payer", ""),
+        }
+
+        logger.info(f"Generating 3 offers for: {market_name}")
+        update_status("0_idea_generator", "running", f"オファー3案生成中: {market_name}")
+
+        # Generate offers
+        offers = generate_offers(
+            gap_top3, gate_result, micro_market,
+            knowledge_context, learning_context,
+            effective_run_id,
+        )
+
+        # Save to sheets
+        count = save_offers_to_sheets(offers, effective_run_id)
+
+        offer_names = " / ".join(
+            o.get("offer_name", "")[:20] for o in offers[:3]
+        )
+
+        if count > 0:
+            slack_notify(
+                f":bulb: V2オファー生成完了: *{market_name}*\n"
+                f"  {count}案: {offer_names}"
+            )
+
+        update_status(
+            "0_idea_generator", "success",
+            f"{count}案生成: {offer_names}",
+            {
+                "run_id": effective_run_id,
+                "offers_generated": count,
+            },
+        )
+
+        logger.info(f"=== V2 Offer generator complete: {count} offers ===")
+
+        return {
+            "run_id": effective_run_id,
+            "market_name": market_name,
+            "offers": offers,
+        }
+
     except Exception as e:
         update_status("0_idea_generator", "error", str(e))
-        logger.error(f"Idea generator failed: {e}")
+        logger.error(f"V2 Offer generator failed: {e}")
         raise
+
+
+def _extract_gap_top3_from_context(
+    run_id: str,
+    competitors: list[dict],
+) -> list[dict]:
+    """Extract gap_top3 from available data.
+
+    When called from orchestrate_v2, gap_top3 is passed directly.
+    For standalone execution, we create a minimal gap list from
+    competitor data patterns.
+    """
+    # Try to get from orchestrate_v2 context (stored as a temp file)
+    gap_file = DATA_DIR / f"gap_top3_{run_id}.json"
+    if gap_file.exists():
+        try:
+            return json.loads(gap_file.read_text("utf-8"))
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Fallback: generate basic gap context from competitor patterns
+    # This is a simplified version — the full gap_top3 comes from competitor_20_prompt.j2
+    logger.warning(
+        "gap_top3 not found in context. Using empty gaps — "
+        "offer generation may be suboptimal."
+    )
+    return [
+        {"rank": 1, "gap": "競合データからのギャップ分析が必要", "evidence_url": "", "evidence_description": ""},
+        {"rank": 2, "gap": "追加調査が必要", "evidence_url": "", "evidence_description": ""},
+        {"rank": 3, "gap": "追加調査が必要", "evidence_url": "", "evidence_description": ""},
+    ]
 
 
 if __name__ == "__main__":

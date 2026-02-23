@@ -223,11 +223,42 @@ async def process_targets(
     return counts
 
 
+def _check_distribution_guard() -> tuple[bool, str]:
+    """V2 distribution guard: check lp_ready_log READY + interview_log >= 5."""
+    try:
+        lp_ready = get_all_rows("lp_ready_log")
+        active_ready = [r for r in lp_ready if r.get("status") == "READY"]
+        if not active_ready:
+            return False, "lp_ready_logにREADYレコードなし"
+
+        latest_run_id = active_ready[-1].get("run_id", "")
+        if latest_run_id:
+            interviews = get_all_rows("interview_log")
+            interview_count = len([
+                i for i in interviews
+                if i.get("run_id") == latest_run_id
+            ])
+            if interview_count < 5:
+                return False, f"ヒアリング{interview_count}/5件"
+    except Exception as e:
+        logger.warning(f"Distribution guard check error: {e}")
+        return True, ""  # Don't block on guard infrastructure failure
+
+    return True, ""
+
+
 def main():
     logger.info("=== Form sales start ===")
     update_status("3_form_sales", "running", "フォーム営業準備中...")
 
     try:
+        # V2 distribution guard
+        can_proceed, guard_reason = _check_distribution_guard()
+        if not can_proceed:
+            logger.info(f"配信ガード: {guard_reason} → 配信停止")
+            update_status("3_form_sales", "success", f"配信ガード: {guard_reason}")
+            return
+
         settings = _load_settings()
         daily_limit = int(settings.get("form_sales_per_day", "5"))
 

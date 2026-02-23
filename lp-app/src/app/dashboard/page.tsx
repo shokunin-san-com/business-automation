@@ -39,6 +39,15 @@ interface PendingMarket {
   created_at: string;
 }
 
+interface V2Data {
+  latestRunId: string;
+  gateResults: Record<string, string>[];
+  offers: Record<string, string>[];
+  scoringWarnings: string[];
+  ceoReviewNeeded: { market: boolean; offer: boolean };
+  lpReadyStatus: string;
+}
+
 interface DashboardData {
   pipeline: ScriptInfo[];
   lpCount: number;
@@ -47,6 +56,7 @@ interface DashboardData {
   pendingIdeas?: PendingIdea[];
   pendingMarkets?: PendingMarket[];
   schedulerStatus?: Record<string, SchedulerInfo>;
+  v2?: V2Data;
 }
 
 interface KnowledgeDoc {
@@ -718,9 +728,6 @@ export default function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{market.market_name}</p>
-                        <span className="rounded-md bg-blue-500/15 px-2 py-0.5 text-[10px] text-blue-400 border border-blue-500/20">
-                          {"\u30B9\u30B3\u30A2"}: {market.total_score}/100
-                        </span>
                       </div>
                       <p className="mt-1 text-xs text-white/40 line-clamp-2">{market.recommended_entry_angle}</p>
                       <p className="mt-1 text-[10px] text-white/30 line-clamp-2">{market.rationale}</p>
@@ -856,6 +863,102 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          {/* ---- V2 Command Center Panel ---- */}
+          {activeTab === "pipeline" && data.v2 && (
+            <section className="mb-4 space-y-3">
+              {/* Scoring Warnings */}
+              {data.v2.scoringWarnings.length > 0 && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+                  <h3 className="mb-2 text-sm font-bold text-red-400">🚨 方針矛盾チェッカー</h3>
+                  {data.v2.scoringWarnings.map((w, i) => (
+                    <p key={i} className="text-xs text-red-300">{w}</p>
+                  ))}
+                </div>
+              )}
+
+              {/* Run Summary */}
+              {data.v2.latestRunId && (
+                <div className="rounded-xl border border-white/[.08] bg-white/[.03] p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-white/90">🎯 V2 司令塔</h3>
+                    <span className="text-[10px] text-white/40 font-mono">run: {data.v2.latestRunId.slice(0, 8)}</span>
+                  </div>
+
+                  {/* Gate Results */}
+                  <div className="mb-3">
+                    <p className="text-xs text-white/50 mb-1">ゲート結果</p>
+                    <div className="flex flex-wrap gap-2">
+                      {data.v2.gateResults.map((g, i) => (
+                        <span
+                          key={i}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            g.status === "PASS"
+                              ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                              : "bg-red-500/10 text-red-400 border border-red-500/20"
+                          }`}
+                        >
+                          {g.status === "PASS" ? "✅" : "❌"} {(g.micro_market || "").slice(0, 25)}
+                        </span>
+                      ))}
+                      {data.v2.gateResults.length === 0 && (
+                        <span className="text-[11px] text-white/30">まだ実行されていません</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Offers */}
+                  {data.v2.offers.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-xs text-white/50 mb-1">オファー3案</p>
+                      <div className="space-y-1">
+                        {data.v2.offers.map((o, i) => (
+                          <div key={i} className="flex items-center gap-2 text-[11px]">
+                            <span className="text-white/70">#{o.offer_num}</span>
+                            <span className="text-white/90 font-medium">{o.offer_name}</span>
+                            <span className="text-white/40">{o.price}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* LP Ready Status */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/50">LP作成:</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        data.v2.lpReadyStatus === "READY"
+                          ? "bg-emerald-500/15 text-emerald-400"
+                          : data.v2.lpReadyStatus === "BLOCKED"
+                            ? "bg-red-500/10 text-red-400"
+                            : "bg-white/5 text-white/30"
+                      }`}
+                    >
+                      {data.v2.lpReadyStatus || "未実行"}
+                    </span>
+                  </div>
+
+                  {/* CEO Review Needed */}
+                  {(data.v2.ceoReviewNeeded.market || data.v2.ceoReviewNeeded.offer) && (
+                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                      <p className="text-xs font-bold text-amber-400 mb-1">👔 CEO承認が必要です</p>
+                      {data.v2.ceoReviewNeeded.market && (
+                        <p className="text-[11px] text-amber-300/80">
+                          • PASS市場が複数あります。却下して1つに絞ってください。
+                        </p>
+                      )}
+                      {data.v2.ceoReviewNeeded.offer && (
+                        <p className="text-[11px] text-amber-300/80">
+                          • オファーが複数あります。却下して絞ってください。
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           )}
 

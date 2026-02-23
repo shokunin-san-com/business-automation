@@ -87,6 +87,10 @@ const EXEC_PATTERNS: { pattern: RegExp; scriptId: string; label: string }[] = [
   { pattern: new RegExp(`(${ACTION_VERBS}).*(自律|abc0|全自動|フル).*(パイプライン|実行)`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
   { pattern: new RegExp(`パイプライン.*(全部|フル|一気に|まとめて|通して).*(${ACTION_VERBS})`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
   { pattern: new RegExp(`(${ACTION_VERBS}).*(一気通貫|エンドツーエンド|e2e)`), scriptId: "orchestrate_abc0", label: "自律型パイプライン" },
+  // V2 pipeline
+  { pattern: /v2.*パイプライン|新.*パイプライン|v2.*実行/, scriptId: "orchestrate_v2", label: "V2パイプライン" },
+  { pattern: new RegExp(`(${ACTION_VERBS}).*v2`), scriptId: "orchestrate_v2", label: "V2パイプライン" },
+  { pattern: /ゲート.*パイプライン|証拠.*パイプライン/, scriptId: "orchestrate_v2", label: "V2パイプライン" },
 ];
 
 /** Detect if the message is an execution command.

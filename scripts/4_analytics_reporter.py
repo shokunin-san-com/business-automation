@@ -153,6 +153,23 @@ def main():
                 f"*{total_suggestions}件* の改善提案を生成しました。"
             )
 
+        # V2: Zero-continuity alert — detect measurement anomalies
+        try:
+            zero_days = sum(
+                1 for m in all_metrics
+                if int(m.get("pageviews", 0)) == 0 and int(m.get("sessions", 0)) == 0
+            )
+            if zero_days >= 3:
+                slack_notify(
+                    f":rotating_light: *計測異常アラート*\n"
+                    f"GA4データが{zero_days}日間連続0です。\n"
+                    f"GTM設定・GA4プロパティ・LP URLを確認してください。\n"
+                    f":warning: これは正常状態ではありません（正常扱い禁止）"
+                )
+                logger.warning(f"Zero-continuity alert: {zero_days} consecutive zero days")
+        except Exception as ze:
+            logger.warning(f"Zero-continuity check failed: {ze}")
+
         total_pv = sum(m.get("pageviews", 0) for m in all_metrics)
         update_status("4_analytics_reporter", "success", f"{total_suggestions}件提案", {
             "suggestions": total_suggestions,

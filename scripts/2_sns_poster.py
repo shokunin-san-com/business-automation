@@ -136,11 +136,46 @@ def _try_post(
         return "blocked", ""
 
 
+def _check_distribution_guard() -> tuple[bool, str]:
+    """V2 distribution guard: check lp_ready_log READY + interview_log >= 5.
+
+    Returns: (can_proceed, reason)
+    """
+    try:
+        lp_ready = get_all_rows("lp_ready_log")
+        active_ready = [r for r in lp_ready if r.get("status") == "READY"]
+        if not active_ready:
+            return False, "lp_ready_logにREADYレコードなし"
+
+        latest_run_id = active_ready[-1].get("run_id", "")
+        if latest_run_id:
+            interviews = get_all_rows("interview_log")
+            interview_count = len([
+                i for i in interviews
+                if i.get("run_id") == latest_run_id
+            ])
+            if interview_count < 5:
+                return False, f"ヒアリング{interview_count}/5件"
+    except Exception as e:
+        logger.warning(f"Distribution guard check error: {e}")
+        # On error, allow execution (don't block on guard infrastructure failure)
+        return True, ""
+
+    return True, ""
+
+
 def main():
     logger.info("=== SNS poster start ===")
     update_status("2_sns_poster", "running", "SNS投稿準備中...")
 
     try:
+        # V2 distribution guard
+        can_proceed, guard_reason = _check_distribution_guard()
+        if not can_proceed:
+            logger.info(f"配信ガード: {guard_reason} → 配信停止")
+            update_status("2_sns_poster", "success", f"配信ガード: {guard_reason}")
+            return
+
         active_ideas = get_rows_by_status("business_ideas", "active")
         if not active_ideas:
             logger.info("No active ideas. Exiting.")

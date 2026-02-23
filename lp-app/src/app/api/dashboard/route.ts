@@ -201,6 +201,80 @@ export async function GET() {
       .slice(0, 100)
       .map((l) => `${l.time} ${l.text}`);
 
+    // --- V2: Gate results, offers, scoring warnings, CEO review status ---
+    let latestRunId = "";
+    let gateResults: Record<string, string>[] = [];
+    let offers: Record<string, string>[] = [];
+    let scoringWarnings: string[] = [];
+    let ceoReviewNeeded = { market: false, offer: false };
+    let lpReadyStatus = "";
+
+    try {
+      // Latest run_id from settings_snapshot
+      const snapshots = await cachedGetAllRows("settings_snapshot");
+      if (snapshots.length > 0) {
+        latestRunId = snapshots[snapshots.length - 1].run_id || "";
+      }
+
+      if (latestRunId) {
+        // Gate results for latest run
+        const gateRows = await cachedGetAllRows("gate_decision_log");
+        gateResults = gateRows.filter((r) => r.run_id === latestRunId);
+
+        // Offers for latest run
+        const offerRows = await cachedGetAllRows("offer_3_log");
+        offers = offerRows.filter((r) => r.run_id === latestRunId);
+
+        // CEO review check
+        const passMarkets = gateResults.filter((r) => r.status === "PASS");
+        const rejectRows = await cachedGetAllRows("ceo_reject_log").catch(() => [] as Record<string, string>[]);
+        const rejectedMarkets = new Set(
+          rejectRows
+            .filter((r) => r.run_id === latestRunId && r.type === "market")
+            .map((r) => r.rejected_item),
+        );
+        const remainingMarkets = passMarkets.filter(
+          (m) => !rejectedMarkets.has(m.micro_market),
+        );
+        ceoReviewNeeded.market = remainingMarkets.length > 1;
+
+        const rejectedOffers = new Set(
+          rejectRows
+            .filter((r) => r.run_id === latestRunId && r.type === "offer")
+            .map((r) => r.rejected_item),
+        );
+        const remainingOffers = offers.filter(
+          (o) => !rejectedOffers.has(o.offer_name),
+        );
+        ceoReviewNeeded.offer = remainingOffers.length > 1;
+
+        // LP ready status
+        const lpReady = await cachedGetAllRows("lp_ready_log").catch(() => [] as Record<string, string>[]);
+        const lpForRun = lpReady.filter((r) => r.run_id === latestRunId);
+        if (lpForRun.length > 0) {
+          lpReadyStatus = lpForRun[lpForRun.length - 1].status || "";
+        }
+      }
+
+      // Scoring warnings: check if deprecated scoring keys still exist in settings
+      const settingsRows = await cachedGetAllRows("settings");
+      const deprecatedKeys = [
+        "exploration_scoring_weights",
+        "orchestrator_min_score_threshold",
+        "orchestrator_auto_approve_n",
+        "orchestrator_auto_approve",
+      ];
+      for (const row of settingsRows) {
+        if (deprecatedKeys.includes(row.key) && row.value) {
+          scoringWarnings.push(
+            `設定 "${row.key}" はV2で廃止済みです。値 "${row.value}" が残っています。削除してください。`,
+          );
+        }
+      }
+    } catch {
+      /* V2 data fetch is best-effort */
+    }
+
     return NextResponse.json({
       pipeline,
       lpCount,
@@ -209,6 +283,15 @@ export async function GET() {
       pendingIdeas,
       pendingMarkets,
       schedulerStatus,
+      // V2 additions
+      v2: {
+        latestRunId,
+        gateResults,
+        offers,
+        scoringWarnings,
+        ceoReviewNeeded,
+        lpReadyStatus,
+      },
     });
   } catch (err) {
     console.error("Dashboard API error:", err);
@@ -221,6 +304,14 @@ export async function GET() {
       pendingIdeas: [],
       pendingMarkets: [],
       schedulerStatus: {},
+      v2: {
+        latestRunId: "",
+        gateResults: [],
+        offers: [],
+        scoringWarnings: [],
+        ceoReviewNeeded: { market: false, offer: false },
+        lpReadyStatus: "",
+      },
     });
   }
 }

@@ -1,5 +1,8 @@
 """
-Output validators for the ABC0 autonomous pipeline.
+Output validators for the pipeline.
+
+V1 (ABC0): scoring-based validators (kept for backward compat)
+V2: evidence-gate validators — PASS/FAIL only, no scores
 
 Pure functions that validate JSON output from each pipeline step.
 Returns ValidationResult with errors, warnings, and optionally corrected data.
@@ -90,7 +93,8 @@ def validate_market_research(
 
 
 # ---------------------------------------------------------------------------
-# Step B: Market Selection validation
+# Step B: Market Selection validation (DEPRECATED — v2ではゲート制に移行)
+# orchestrate_abc0.py の後方互換のために残す
 # ---------------------------------------------------------------------------
 SCORE_AXES = [
     "score_distortion_depth",
@@ -121,7 +125,7 @@ def validate_market_selection(
     data: list | dict,
     weights: dict | None = None,
 ) -> ValidationResult:
-    """Validate market selection scoring output from Step B."""
+    """Validate market selection scoring output from Step B. DEPRECATED in v2."""
     errors: list[str] = []
     warnings: list[str] = []
     w = weights or DEFAULT_WEIGHTS
@@ -343,6 +347,217 @@ def validate_checklist_evaluation(data: list | dict) -> ValidationResult:
         answers = item.get("answers", [])
         if not isinstance(answers, list) or len(answers) == 0:
             warnings.append(f"チェック[{i}]: answers が空")
+
+    return ValidationResult(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
+# ===========================================================================
+# V2 Gate Validators — 証拠ベースPASS/FAIL判定（スコアリング禁止）
+# ===========================================================================
+
+def validate_a1_quick(data: list | dict) -> ValidationResult:
+    """Validate A1-quick gate results.
+
+    Each micro-market must have:
+    - payment_evidence_urls (支払い証拠URL 1件以上)
+    - At least 1 category (demand/seriousness/tailwind) with concrete value + URL
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or len(data) == 0:
+        return ValidationResult(valid=False, errors=["空の結果または不正な型"])
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"マイクロ市場[{i}]: dict型ではありません")
+            continue
+
+        # Payment evidence URL required
+        pay_urls = item.get("payment_evidence_urls", [])
+        if not pay_urls or (isinstance(pay_urls, list) and len(pay_urls) == 0):
+            item["status"] = "FAIL"
+            item["fail_reason"] = "支払い証拠URLなし"
+            continue
+
+        # At least 1 category with concrete value + URL
+        categories_met = 0
+        for cat_key in ("demand_evidence", "seriousness_evidence", "tailwind_evidence"):
+            ev = item.get(cat_key, {})
+            if isinstance(ev, dict) and ev.get("value") and ev.get("url"):
+                categories_met += 1
+
+        if categories_met == 0:
+            item["status"] = "FAIL"
+            item["fail_reason"] = "需要/本気度/追い風のいずれにも具体値+URLなし"
+        else:
+            item["status"] = "PASS"
+
+    return ValidationResult(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
+# A1-deep gate: 8 conditions (a-h), all must be met
+A1_DEEP_CONDITIONS = {
+    "a_payer": "支払者特定（部署/役職）",
+    "b_price_evidence": "価格URL3件 or 見積URL5件 or 導入事例3件+見積2件",
+    "c_tailwind_urls": "追い風根拠URL 2件",
+    "d_seriousness_urls": "VC調達URL2件 or 本気度証拠URL2件",
+    "e_search_metrics": "検索数/CPC/トレンドのうち2つ",
+    "f_competitor_urls": "競合URL 10社以上（実名+URL）",
+    "g_gaps": "穴3つ（各穴に根拠URL 1件）",
+    "h_blackout_hypothesis": "10社黒字化仮説",
+}
+
+
+def validate_a1_deep(data: dict) -> ValidationResult:
+    """Validate A1-deep gate results. All 8 conditions (a-h) must be met."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    missing: list[str] = []
+
+    if not isinstance(data, dict):
+        return ValidationResult(valid=False, errors=["dict型ではありません"])
+
+    # a: payer identification
+    payer = data.get("a_payer", {})
+    if not (isinstance(payer, dict) and payer.get("department") and payer.get("role")):
+        missing.append("a: " + A1_DEEP_CONDITIONS["a_payer"])
+
+    # b: price evidence
+    b = data.get("b_price_evidence", {})
+    price_urls = b.get("price_urls", []) if isinstance(b, dict) else []
+    quote_urls = b.get("quote_urls", []) if isinstance(b, dict) else []
+    case_urls = b.get("case_urls", []) if isinstance(b, dict) else []
+    b_ok = (
+        len(price_urls) >= 3
+        or len(quote_urls) >= 5
+        or (len(case_urls) >= 3 and len(quote_urls) >= 2)
+    )
+    if not b_ok:
+        missing.append("b: " + A1_DEEP_CONDITIONS["b_price_evidence"])
+
+    # c: tailwind URLs (2+)
+    c_urls = data.get("c_tailwind_urls", [])
+    if not isinstance(c_urls, list) or len(c_urls) < 2:
+        missing.append("c: " + A1_DEEP_CONDITIONS["c_tailwind_urls"])
+
+    # d: seriousness/VC evidence
+    d = data.get("d_seriousness_urls", {})
+    vc_urls = d.get("vc_urls", []) if isinstance(d, dict) else []
+    serious_urls = d.get("seriousness_urls", []) if isinstance(d, dict) else []
+    if not (len(vc_urls) >= 2 or len(serious_urls) >= 2):
+        missing.append("d: " + A1_DEEP_CONDITIONS["d_seriousness_urls"])
+
+    # e: search metrics (2 of 3)
+    e = data.get("e_search_metrics", {})
+    e_count = sum(1 for k in ("search_volume", "cpc", "trend") if e.get(k)) if isinstance(e, dict) else 0
+    if e_count < 2:
+        missing.append("e: " + A1_DEEP_CONDITIONS["e_search_metrics"])
+
+    # f: competitor URLs (10+)
+    f_comps = data.get("f_competitor_urls", [])
+    if not isinstance(f_comps, list) or len(f_comps) < 10:
+        missing.append("f: " + A1_DEEP_CONDITIONS["f_competitor_urls"])
+
+    # g: gaps (3, each with evidence URL)
+    g_gaps = data.get("g_gaps", [])
+    if not isinstance(g_gaps, list) or len(g_gaps) < 3:
+        missing.append("g: " + A1_DEEP_CONDITIONS["g_gaps"])
+    else:
+        for gi, gap in enumerate(g_gaps[:3]):
+            if isinstance(gap, dict) and not gap.get("evidence_url"):
+                missing.append(f"g: 穴{gi+1}に根拠URLなし")
+
+    # h: blackout hypothesis
+    h = data.get("h_blackout_hypothesis", "")
+    if not h or (isinstance(h, str) and len(h.strip()) < 20):
+        missing.append("h: " + A1_DEEP_CONDITIONS["h_blackout_hypothesis"])
+
+    status = "FAIL" if missing else "PASS"
+    data["gate_status"] = status
+    data["missing_items"] = missing
+
+    return ValidationResult(
+        valid=len(errors) == 0 and len(missing) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
+def validate_competitor_20(data: list | dict) -> ValidationResult:
+    """Validate 20-company competitor template output."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or len(data) == 0:
+        return ValidationResult(valid=False, errors=["空の結果または不正な型"])
+
+    if len(data) < 20:
+        warnings.append(f"競合20社に対し {len(data)} 件のみ返却")
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"競合[{i}]: dict型ではありません")
+            continue
+
+        if not item.get("company_name"):
+            errors.append(f"競合[{i}]: company_name が空")
+
+        if not item.get("url"):
+            warnings.append(f"競合[{i}]: URLが空（{item.get('company_name', '不明')}）")
+
+    return ValidationResult(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
+# Offer 3: mandatory 7 fields
+OFFER_REQUIRED_FIELDS = [
+    "payer", "offer_name", "deliverable",
+    "time_to_value", "price", "replaces", "upsell",
+]
+
+
+def validate_offer_3(data: list | dict) -> ValidationResult:
+    """Validate 3 instant-decision offers. All 7 fields mandatory."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or len(data) == 0:
+        return ValidationResult(valid=False, errors=["空の結果または不正な型"])
+
+    if len(data) != 3:
+        warnings.append(f"期待3案に対し {len(data)} 案返却")
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"オファー[{i}]: dict型ではありません")
+            continue
+
+        for fname in OFFER_REQUIRED_FIELDS:
+            val = item.get(fname)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                errors.append(f"オファー[{i}]: 必須フィールド '{fname}' が空")
 
     return ValidationResult(
         valid=len(errors) == 0,

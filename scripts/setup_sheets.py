@@ -208,6 +208,93 @@ SHEETS = {
         "activated_at",
         "performance_json",
     ],
+    # ---------------------------------------------------------------
+    # V2 新シート — 証拠ゲート・マイクロ市場・即決オファー
+    # ---------------------------------------------------------------
+    "gate_decision_log": [
+        "run_id",
+        "timestamp",
+        "micro_market",
+        "status",               # PASS / FAIL
+        "missing_items",        # JSON: 未達条件リスト
+        "evidence_urls",        # JSON: 取得済み証拠URL
+        "payer",                # 支払者情報
+        "blackout_hypothesis",  # 10社黒字化仮説
+    ],
+    "competitor_20_log": [
+        "run_id",
+        "market",
+        "company_name",
+        "url",
+        "price_url",
+        "case_url",
+        "hire_url",
+        "ad_url",
+        "expo_url",
+        "update_url",
+    ],
+    "offer_3_log": [
+        "run_id",
+        "offer_num",
+        "payer",
+        "offer_name",
+        "deliverable",
+        "time_to_value",
+        "price",
+        "replaces",
+        "upsell",
+    ],
+    "lp_ready_log": [
+        "run_id",
+        "timestamp",
+        "gate_ok",
+        "competitor_ok",
+        "offer_ok",
+        "status",           # READY / BLOCKED
+        "blocked_reason",
+    ],
+    "exploration_lane_log": [
+        "run_id",
+        "market",
+        "adopted_reason",
+        "deadline",
+        "interview_count",
+        "status",           # ACTIVE / EXPIRED / PASSED
+    ],
+    "micro_market_list": [
+        "run_id",
+        "market_id",
+        "micro_market",
+        "industry",
+        "task",
+        "role",
+        "timing",
+        "regulation",
+        "intent_word",
+        "a1q_status",
+    ],
+    "settings_snapshot": [
+        "run_id",
+        "timestamp",
+        "snapshot_json",
+    ],
+    "ceo_reject_log": [
+        "run_id",
+        "type",             # market / offer
+        "rejected_item",
+        "reject_reason",
+        "reviewed_by",
+        "timestamp",
+    ],
+    "interview_log": [
+        "run_id",
+        "date",
+        "interviewee_type",
+        "top_pain",
+        "current_alternative",
+        "willingness_to_pay",
+        "next_action",
+    ],
 }
 
 # Default settings to seed
@@ -222,7 +309,7 @@ DEFAULT_SETTINGS = [
     ["exploration_segments_per_market", "3", "各市場で調査するセグメント数"],
     ["selection_top_n", "3", "市場選定で承認候補にする上位市場数"],
     ["competitors_per_market", "5", "各選定市場で分析する競合数"],
-    ["exploration_scoring_weights", '{"distortion":3,"barrier":2,"bpo":2,"growth":1.5,"capability":1.5}', "市場選定の5軸重み設定"],
+    # exploration_scoring_weights — v2で廃止（スコアリング禁止）
     ["market_direction_notes", "", "市場探索・選定の方向性メモ（自由記述）"],
     ["use_ceo_profile", "false", "trueでCEO経歴スコアリング有効"],
     ["ceo_profile_json", "岡部。M&Aフルサイクル経験（ソーシング→DD→バリュエーション→PMI→売却）。建設・インフラの設備設計〜施工管理の実務あり。海外ビジネス（ベトナム進出、英語交渉、輸入実務）。再生可能エネルギー（系統用蓄電池の市場調査・用地調査）。有料職業紹介事業の許認可保有、特定技能・登録支援機関の知見。複数企業の創業→売却、PMI完遂の実績。上場企業の経営企画・IR経験。得意業界: 建設、エネルギー、M&A、人材紹介、インフラ、製造。モチベーション: 海外案件、大規模エネルギー事業、M&A。資格: 第二種電気工事士、有料職業紹介事業、M&A登録支援機関", "CEO経歴データ（自由記述）"],
@@ -235,9 +322,7 @@ DEFAULT_SETTINGS = [
     ["sender_name", "みゆ", "フォーム営業の送信者名"],
     ["sender_email", "info02@shokunin-san.com", "フォーム営業の返信先メールアドレス"],
     ["sender_company", "MarketProbe Project", "フォーム営業で使用する会社名"],
-    ["orchestrator_auto_approve", "true", "自律型パイプラインで市場を自動承認するか"],
-    ["orchestrator_auto_approve_n", "", "自動承認する上位市場数（空=selection_top_n）"],
-    ["orchestrator_min_score_threshold", "0", "自動承認の最低スコア閾値"],
+    # orchestrator_auto_approve / auto_approve_n / min_score_threshold — v2で廃止（ゲート制に移行）
     ["pipeline_improvement_log", "", "自己反省の改善提案・リスク・次回アクション蓄積（最新5件）"],
 ]
 

@@ -1,11 +1,13 @@
 """
-C_competitor_analysis.py — Analyze competitors in selected markets.
+C_competitor_analysis.py — V2: 20-company fixed-template competitor analysis.
 
-Reads approved markets from market_selection (status=selected),
-identifies and analyzes competitors, outputs gap analysis
-that feeds into idea generation.
+Reads PASS markets from gate_decision_log (or ACTIVE exploration lane),
+analyzes 20 competitors with 7 URL types each, identifies top-3 gaps.
+Outputs to competitor_20_log sheet.
 
-Schedule: Monday 4:00 (after market selection approval)
+All scoring is **prohibited**. URLs must be real or left empty.
+
+Schedule: triggered by orchestrate_v2.py after A1-deep gate passes
 """
 from __future__ import annotations
 
@@ -18,179 +20,244 @@ from jinja2 import Environment, FileSystemLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import TEMPLATES_DIR, get_logger
-from utils.claude_client import generate_json
-from utils.sheets_client import get_all_rows, append_rows, ensure_sheet_exists
+from utils.claude_client import generate_json_with_retry
+from utils.sheets_client import get_all_rows, append_rows
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.pdf_knowledge import get_knowledge_summary
+from utils.validators import validate_competitor_20
 
 logger = get_logger("competitor_analysis", "competitor_analysis.log")
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _load_settings() -> dict:
     rows = get_all_rows("settings")
     return {r["key"]: r["value"] for r in rows}
 
 
-def _get_selected_markets() -> list:
-    """Get markets approved for competitor analysis."""
-    try:
-        rows = get_all_rows("market_selection")
-        return [r for r in rows if r.get("status") == "selected"]
-    except Exception:
-        return []
+def _get_pass_market(run_id: str | None = None) -> dict | None:
+    """Get the PASS market from gate_decision_log for this run.
 
-
-def _get_market_research(market_research_id: str) -> dict | None:
-    """Fetch the original market research row for enriched context."""
+    If no run_id given, uses the latest PASS record.
+    Falls back to ACTIVE exploration lane if no PASS found.
+    """
     try:
-        rows = get_all_rows("market_research")
-        for r in rows:
-            if r.get("id") == market_research_id:
-                return r
+        rows = get_all_rows("gate_decision_log")
+        pass_rows = [r for r in rows if r.get("status") == "PASS"]
+        if run_id:
+            pass_rows = [r for r in pass_rows if r.get("run_id") == run_id]
+        if pass_rows:
+            return pass_rows[-1]  # latest
     except Exception:
         pass
+
+    # Fallback: check exploration_lane_log for ACTIVE
+    try:
+        lanes = get_all_rows("exploration_lane_log")
+        active = [l for l in lanes if l.get("status") == "ACTIVE"]
+        if run_id:
+            active = [l for l in active if l.get("run_id") == run_id]
+        if active:
+            lane = active[-1]
+            return {
+                "micro_market": lane.get("market", ""),
+                "status": "ACTIVE_EXPLORATION",
+                "run_id": lane.get("run_id", ""),
+            }
+    except Exception:
+        pass
+
     return None
 
 
-def _already_analyzed(market_selection_id: str) -> bool:
+def _get_gate_result(run_id: str, micro_market: str) -> dict:
+    """Fetch the full gate result from gate_decision_log for context."""
     try:
-        rows = get_all_rows("competitor_analysis")
-        return any(r.get("market_selection_id") == market_selection_id for r in rows)
+        rows = get_all_rows("gate_decision_log")
+        for r in rows:
+            if r.get("run_id") == run_id and r.get("micro_market") == micro_market:
+                return r
+    except Exception:
+        pass
+    return {}
+
+
+def _already_analyzed(run_id: str) -> bool:
+    """Check if competitor analysis already exists for this run."""
+    try:
+        rows = get_all_rows("competitor_20_log")
+        return any(r.get("run_id") == run_id for r in rows)
     except Exception:
         return False
 
 
-def analyze_competitors(
-    market_selection: dict,
-    market_research: dict | None,
-    settings: dict,
+# ---------------------------------------------------------------------------
+# Core analysis
+# ---------------------------------------------------------------------------
+
+def analyze_competitors_20(
+    micro_market: dict,
+    gate_result: dict,
     knowledge_context: str,
-) -> list:
-    """Generate competitor analysis for a selected market."""
-    competitors_count = int(settings.get("competitors_per_market", "5"))
+    run_id: str,
+) -> dict:
+    """Analyze 20 competitors with 7 URL types each.
 
-    research_context = {}
-    if market_research:
-        for k in ["market_size_tam", "market_size_sam", "industry_structure",
-                   "key_players", "customer_pain_points", "entry_barriers"]:
-            research_context[k] = market_research.get(k, "")
-
-    template = jinja_env.get_template("competitor_analysis_prompt.j2")
+    Returns dict with 'competitors' list and 'gap_top3' list.
+    """
+    template = jinja_env.get_template("competitor_20_prompt.j2")
     prompt = template.render(
-        market_name=market_selection.get("market_name", ""),
-        entry_angle=market_selection.get("recommended_entry_angle", ""),
-        pest_summary=market_selection.get("pest_summary", ""),
-        five_forces_summary=market_selection.get("five_forces_summary", ""),
-        market_research=json.dumps(research_context, ensure_ascii=False),
-        competitors_count=competitors_count,
+        micro_market_json=json.dumps(micro_market, ensure_ascii=False),
+        gate_result_json=json.dumps(gate_result, ensure_ascii=False),
         knowledge_context=knowledge_context,
     )
 
-    result = generate_json(
+    result = generate_json_with_retry(
         prompt=prompt,
-        system="あなたは競合分析の専門家です。客観的かつ具体的に競合を分析し、"
-               "参入機会とギャップを特定してください。"
-               "必ず指定のJSON配列フォーマットで出力してください。"
-               "各競合の説明は簡潔に（各フィールド100文字以内）してください。",
+        system=(
+            "あなたは競合分析の専門家です。"
+            "スコアを出すな。架空の企業名・URLは絶対に出すな。"
+            "20社固定で分析し、各社に7種のURLを付与すること。"
+            "URLが見つからない場合は空文字にする。"
+            "必ず指定のJSONオブジェクトフォーマットで出力してください。"
+        ),
         max_tokens=16384,
-        temperature=0.4,
+        temperature=0.3,
+        max_retries=3,
+        validator=validate_competitor_20,
     )
 
-    if isinstance(result, dict):
-        return [result]
+    if isinstance(result, list):
+        # Validator may return corrected dict or list
+        result = {"competitors": result, "gap_top3": []}
+
     return result
 
 
-def save_analysis_to_sheets(
-    analysis_rows: list,
-    market_selection_id: str,
+def save_competitors_to_sheets(
+    analysis: dict,
+    run_id: str,
     market_name: str,
 ) -> int:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    rows = []
+    """Save 20 competitors to competitor_20_log sheet."""
+    competitors = analysis.get("competitors", [])
+    rows: list[list] = []
 
-    for comp in analysis_rows:
-        comp_name = comp.get("competitor_name", "unknown")
-        safe_name = comp_name[:20].replace(" ", "-")
-        gap_opps = comp.get("gap_opportunities", [])
-
+    for comp in competitors:
         rows.append([
-            f"comp-{market_selection_id}-{safe_name}",
-            market_selection_id,
+            run_id,
             market_name,
-            comp_name,
-            comp.get("competitor_url", ""),
-            comp.get("competitor_type", "direct"),
-            comp.get("product_service", ""),
-            comp.get("pricing_model", ""),
-            comp.get("target_segment", ""),
-            comp.get("strengths", ""),
-            comp.get("weaknesses", ""),
-            comp.get("market_share_estimate", ""),
-            comp.get("differentiation", ""),
-            json.dumps(gap_opps, ensure_ascii=False) if isinstance(gap_opps, list) else str(gap_opps),
-            now,
-            comp.get("info_source", ""),
+            comp.get("company_name", ""),
+            comp.get("url", ""),
+            comp.get("price_url", ""),
+            comp.get("case_url", ""),
+            comp.get("hire_url", ""),
+            comp.get("ad_url", ""),
+            comp.get("expo_url", ""),
+            comp.get("update_url", ""),
         ])
 
     if rows:
-        append_rows("competitor_analysis", rows)
+        append_rows("competitor_20_log", rows)
     return len(rows)
 
 
-def main():
-    logger.info("=== Competitor analysis start ===")
-    update_status("C_competitor_analysis", "running", "競合調査を開始...")
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def main(run_id: str | None = None):
+    """
+    V2 Competitor Analysis: 20-company fixed template.
+
+    Can be called standalone or from orchestrate_v2.py with a shared run_id.
+    """
+    logger.info("=== V2 Competitor analysis start ===")
+    update_status("C_competitor_analysis", "running", "V2競合分析を開始...")
 
     try:
-        settings = _load_settings()
         knowledge_context = get_knowledge_summary()
 
-        selected_markets = _get_selected_markets()
-        if not selected_markets:
-            logger.info("No selected markets found. Exiting.")
-            update_status("C_competitor_analysis", "success", "承認済み市場なし",
+        # Get the PASS market
+        pass_market = _get_pass_market(run_id)
+        if not pass_market:
+            msg = "PASS市場なし。gate_decision_logにPASSレコードが存在しません"
+            logger.info(msg)
+            update_status("C_competitor_analysis", "success", msg,
                           {"competitors_analyzed": 0})
-            return
+            return {"competitors": [], "gap_top3": []}
 
-        total_competitors = 0
+        market_name = pass_market.get("micro_market", "unknown")
+        effective_run_id = run_id or pass_market.get("run_id", "")
 
-        for market in selected_markets:
-            sel_id = market.get("id", "")
-            if _already_analyzed(sel_id):
-                logger.info(f"Already analyzed: {market.get('market_name')}, skipping")
-                continue
+        # Skip if already analyzed
+        if effective_run_id and _already_analyzed(effective_run_id):
+            msg = f"run_id={effective_run_id[:8]} は分析済み。スキップ"
+            logger.info(msg)
+            update_status("C_competitor_analysis", "success", msg)
+            return {"competitors": [], "gap_top3": []}
 
-            market_name = market.get("market_name", "")
-            update_status("C_competitor_analysis", "running", f"競合分析中: {market_name}")
-            logger.info(f"Analyzing competitors in: {market_name}")
+        logger.info(f"Analyzing 20 competitors for: {market_name}")
+        update_status("C_competitor_analysis", "running", f"20社分析中: {market_name}")
 
-            research = _get_market_research(market.get("market_research_id", ""))
-            competitors = analyze_competitors(market, research, settings, knowledge_context)
+        # Get gate result for context
+        gate_result = _get_gate_result(effective_run_id, market_name)
 
-            count = save_analysis_to_sheets(competitors, sel_id, market_name)
-            total_competitors += count
-            logger.info(f"Analyzed {count} competitors in {market_name}")
+        # Build micro_market dict for prompt
+        micro_market_data = {
+            "micro_market": market_name,
+            "payer": pass_market.get("payer", ""),
+            "evidence_urls": pass_market.get("evidence_urls", ""),
+            "blackout_hypothesis": pass_market.get("blackout_hypothesis", ""),
+        }
 
-        if total_competitors > 0:
+        # Run analysis
+        analysis = analyze_competitors_20(
+            micro_market_data, gate_result, knowledge_context, effective_run_id
+        )
+
+        # Save to sheets
+        count = save_competitors_to_sheets(analysis, effective_run_id, market_name)
+
+        gap_top3 = analysis.get("gap_top3", [])
+        gap_summary = " / ".join(
+            g.get("gap", "")[:30] for g in gap_top3[:3]
+        ) if gap_top3 else "ギャップ未検出"
+
+        if count > 0:
             slack_notify(
-                f":crossed_swords: 競合調査完了: "
-                f"*{len(selected_markets)}市場* で *{total_competitors}社* を分析しました。\n"
-                f"次回のアイデア生成に反映されます。"
+                f":crossed_swords: V2競合分析完了: *{market_name}*\n"
+                f"  {count}社を分析\n"
+                f"  穴トップ3: {gap_summary}"
             )
 
         update_status(
             "C_competitor_analysis", "success",
-            f"{total_competitors}社の競合を分析",
-            {"competitors_analyzed": total_competitors,
-             "markets_processed": len(selected_markets)},
+            f"{count}社分析 | 穴: {gap_summary}",
+            {
+                "run_id": effective_run_id,
+                "competitors_analyzed": count,
+                "gap_count": len(gap_top3),
+            },
         )
-        logger.info(f"=== Competitor analysis complete: {total_competitors} competitors ===")
+
+        logger.info(f"=== V2 Competitor analysis complete: {count} competitors ===")
+
+        return {
+            "run_id": effective_run_id,
+            "market_name": market_name,
+            "competitors": analysis.get("competitors", []),
+            "gap_top3": gap_top3,
+        }
+
     except Exception as e:
         update_status("C_competitor_analysis", "error", str(e))
-        logger.error(f"Competitor analysis failed: {e}")
+        logger.error(f"V2 Competitor analysis failed: {e}")
         raise
 
 

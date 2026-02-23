@@ -170,45 +170,21 @@ def notify_slack_approval(selections: list, top_n: int) -> None:
 
 
 def main():
-    logger.info("=== Market selection start ===")
-    update_status("B_market_selection", "running", "市場選定スコアリング開始...")
-
-    try:
-        settings = _load_settings()
-        top_n = int(settings.get("selection_top_n", "3"))
-        knowledge_context = get_knowledge_summary()
-        market_direction_notes = settings.get("market_direction_notes", "")
-        batch_id = datetime.now().strftime("%Y-%m-%d")
-
-        unscored = _get_unscored_research()
-        if not unscored:
-            logger.info("No unscored market research found. Exiting.")
-            update_status("B_market_selection", "success", "新規対象なし",
-                          {"markets_scored": 0})
-            return
-
-        update_status("B_market_selection", "running",
-                      f"{len(unscored)}市場をスコアリング中...")
-        selections = score_markets(unscored, settings, knowledge_context, market_direction_notes)
-
-        # Sort by total_score descending
-        selections.sort(key=lambda x: float(x.get("total_score", 0)), reverse=True)
-
-        count = save_selections_to_sheets(selections, batch_id, top_n=top_n)
-
-        if count > 0:
-            notify_slack_approval(selections, top_n)
-
-        update_status(
-            "B_market_selection", "success",
-            f"{count}市場スコアリング完了（上位{top_n}件を承認待ち）",
-            {"markets_scored": count, "top_n": top_n},
-        )
-        logger.info(f"=== Market selection complete: {count} markets scored ===")
-    except Exception as e:
-        update_status("B_market_selection", "error", str(e))
-        logger.error(f"Market selection failed: {e}")
-        raise
+    # =======================================================================
+    # V2 DEPRECATED — このスクリプトはv2で廃止されました。
+    # スコアリング（点数・重み・ランキング）は全て禁止です。
+    # 代わりに orchestrate_v2.py の証拠ベースPASS/FAILゲートを使用してください。
+    # =======================================================================
+    logger.warning("=" * 60)
+    logger.warning("B_market_selection.py はV2で廃止されました。")
+    logger.warning("orchestrate_v2.py の証拠ベースゲート制に移行済み。")
+    logger.warning("このスクリプトを直接実行しないでください。")
+    logger.warning("=" * 60)
+    update_status(
+        "B_market_selection", "success",
+        "V2で廃止済み — orchestrate_v2.py を使用してください",
+    )
+    return
 
 
 if __name__ == "__main__":

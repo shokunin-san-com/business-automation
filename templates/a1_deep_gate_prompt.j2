@@ -1,0 +1,134 @@
+あなたは市場参入判定の専門家です。
+以下のマイクロ市場について「深いゲート（A1-deep）」を実施してください。
+
+## ★絶対ルール★
+1. **スコアを出すな** — 点数・重み・ランキング・偏差値・合計点は一切禁止
+2. **推定値でPASSするな** — 実際のURLが取れなければFAIL。「おそらく」「推定で」のPASSは禁止
+3. **架空のURLは絶対に出さない** — 存在しないURLを捏造した時点で全体FAIL
+4. **判定は PASS / FAIL の2値のみ** — 全8条件クリアでPASS、1つでも欠けたらFAIL
+5. **全条件に実URLを添えること** — URLなしの「事実のみ記述」はFAIL扱い
+
+## 判定対象マイクロ市場
+{{ micro_market_json }}
+
+## A1-quick ゲート結果（参考）
+{{ a1_quick_result_json }}
+
+## A1-deep 全8条件（全て必須）
+
+### a) 支払者特定
+この市場で実際にお金を払う人物の **部署** と **役職** を特定する。
+- 例: 「建設会社の安全管理部 部長」「製造業の品質保証課 課長」
+- 根拠: 導入事例、求人情報、業界レポート等のURL
+
+### b) 価格証拠
+以下のいずれかを満たすこと（複合でも可）：
+- 価格URL 3件以上（サービスの料金ページ、比較サイト等）
+- 見積URL 5件以上（見積もり依頼ページ、相見積もりサイト等）
+- 導入事例 3件以上 ＋ 見積URL 2件以上
+
+### c) 追い風根拠
+市場の成長を後押しする外的要因のURL 2件以上。
+- 法改正、補助金、技術革新、社会変化等
+- 省庁発表、ニュース記事、業界団体発表等
+
+### d) 本気度証拠
+市場参加者の本気度を示すURL 2件以上。
+- VC調達ニュース 2件以上
+- または: 競合の大型採用、M&A、大手参入等の証拠URL 2件以上
+
+### e) 検索指標
+以下のうち2つ以上を具体数値 + URL/ツール名で提示：
+- 月間検索数（Google Keyword Planner、Ubersuggest等）
+- CPC（Google Ads等）
+- Google Trends のトレンド方向（上昇/横ばい/下降）
+
+### f) 競合URL
+この市場の競合企業を **10社以上** 特定し、各社の **実名 + 公式サイトURL** を列挙。
+- 架空の企業名は絶対禁止
+- URLが見つからない場合はその企業をカウントしない
+
+### g) 穴（ギャップ）
+既存競合がカバーしていない **穴を3つ** 特定。
+- 各穴に **根拠URL 1件以上** を添える（競合サイトの機能一覧、レビューサイト、不満の声等）
+- 穴の定義: 顧客が求めているが、既存サービスでは対応していない or 不十分なもの
+
+### h) 10社黒字化仮説
+このマイクロ市場で **10社の顧客を獲得すれば黒字化** できる仮説を記述。
+- 想定単価 × 10社 = 月額/年額の売上
+- 原価構造（人件費、ツール費等）の概算
+- 黒字化の根拠を論理的に記述
+
+{% if knowledge_context %}
+## 参考知識ベース
+{{ knowledge_context }}
+{% endif %}
+
+## 出力フォーマット
+JSONオブジェクトで出力してください。JSON以外のテキストは含めないでください。
+
+```json
+{
+  "micro_market": "マイクロ市場名",
+  "market_id": "MM-001",
+  "status": "PASS または FAIL",
+  "missing_items": ["FAILの場合: 未達条件のリスト（例: 'b_price_evidence', 'f_competitor_urls'）"],
+  "conditions": {
+    "a_payer": {
+      "met": true,
+      "department": "部署名",
+      "role": "役職名",
+      "evidence_urls": [{"url": "https://...", "description": "根拠の説明"}]
+    },
+    "b_price_evidence": {
+      "met": true,
+      "price_urls": [{"url": "https://...", "description": "料金ページ"}],
+      "quote_urls": [{"url": "https://...", "description": "見積もりページ"}],
+      "case_urls": [{"url": "https://...", "description": "導入事例"}]
+    },
+    "c_tailwind_urls": {
+      "met": true,
+      "urls": [
+        {"url": "https://...", "description": "追い風の根拠"}
+      ]
+    },
+    "d_seriousness_urls": {
+      "met": true,
+      "urls": [
+        {"url": "https://...", "description": "本気度の根拠"}
+      ]
+    },
+    "e_search_metrics": {
+      "met": true,
+      "metrics": [
+        {"type": "search_volume", "value": "月間2,400", "source": "Ubersuggest"},
+        {"type": "cpc", "value": "¥350", "source": "Google Ads"}
+      ]
+    },
+    "f_competitor_urls": {
+      "met": true,
+      "competitors": [
+        {"name": "企業名", "url": "https://..."},
+        {"name": "企業名2", "url": "https://..."}
+      ],
+      "total_count": 12
+    },
+    "g_gaps": {
+      "met": true,
+      "gaps": [
+        {"gap": "穴の説明", "evidence_url": "https://...", "evidence_description": "根拠の説明"},
+        {"gap": "穴の説明2", "evidence_url": "https://...", "evidence_description": "根拠の説明"},
+        {"gap": "穴の説明3", "evidence_url": "https://...", "evidence_description": "根拠の説明"}
+      ]
+    },
+    "h_blackout_hypothesis": {
+      "met": true,
+      "unit_price": "月額XX万円",
+      "revenue_10_clients": "月額XX万円 × 10社 = XX万円/月",
+      "cost_structure": "人件費XX万円 + ツール費XX万円 = XX万円/月",
+      "profit_narrative": "黒字化の論理的根拠（100-200文字）"
+    }
+  },
+  "evidence_urls_all": ["全条件で提示されたURLの一覧（重複除去）"]
+}
+```
