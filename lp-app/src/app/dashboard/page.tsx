@@ -1078,6 +1078,19 @@ export default function DashboardPage() {
                         {Object.entries(script.metrics).map(([k, v]) => (
                           <span key={k} className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
                             {({
+                              // V2 metrics
+                              micro_markets_generated: "生成マイクロ市場",
+                              a1q_passed: "A1q通過",
+                              a1q_failed: "A1q不合格",
+                              a1d_passed: "A1dゲート通過",
+                              a1d_failed: "A1dゲート不合格",
+                              exploration_lanes: "探索レーン",
+                              competitors_20: "競合20社分析",
+                              gap_top3: "穴トップ3",
+                              offers_generated: "即決オファー",
+                              lp_ready: "LP作成可",
+                              lp_blocked: "LP作成不可",
+                              // V1 / shared metrics
                               segments_researched: "調査セグメント",
                               markets_scored: "スコアリング市場",
                               competitors_analyzed: "競合分析",

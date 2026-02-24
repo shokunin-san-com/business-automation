@@ -37,10 +37,7 @@ const SETTING_META: Record<string, SettingMeta> = {
   lp_base_url: { label: "LP ベースURL", description: "LP公開先のベースURL" },
   // Exploration & Selection
   exploration_markets: { label: "探索対象市場", description: "市場リサーチの対象（カンマ区切り）" },
-  exploration_segments_per_market: { label: "セグメント数/市場", description: "市場あたりの探索セグメント数", type: "number", suffix: "件" },
-  selection_top_n: { label: "選定上位N件", description: "市場選定で残す上位件数", type: "number", suffix: "件" },
-  competitors_per_market: { label: "競合分析数/市場", description: "市場あたりの競合分析企業数", type: "number", suffix: "社" },
-  exploration_scoring_weights: { label: "スコアリング重み", description: "市場評価の重み付けJSON", type: "textarea", rows: 2 },
+  competitors_per_market: { label: "競合分析数/市場", description: "V2: 競合20社分析の目標企業数", type: "number", suffix: "社" },
   market_direction_notes: { label: "方向性メモ", description: "市場探索・選定の方向性・考えていること（自由記述、AIプロンプトに反映）", type: "textarea", rows: 3, placeholder: "例: 稟議が短く早期に売上がたつ市場を優先したい" },
   // SNS
   sns_posts_per_day: { label: "SNS投稿数/日", description: "1日あたりのSNS投稿数", type: "number", suffix: "件" },
@@ -144,7 +141,7 @@ export default function SettingsPage() {
     ["target_industries", "trend_keywords", "ideas_per_run", "idea_direction_notes"].includes(s.key)
   );
   const explorationSettings = settings.filter((s) =>
-    ["exploration_markets", "exploration_segments_per_market", "selection_top_n", "competitors_per_market", "exploration_scoring_weights", "market_direction_notes"].includes(s.key)
+    ["exploration_markets", "competitors_per_market", "market_direction_notes"].includes(s.key)
   );
   const salesSettings = settings.filter((s) =>
     ["form_sales_per_day", "lp_base_url"].includes(s.key)

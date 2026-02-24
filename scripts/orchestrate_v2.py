@@ -540,15 +540,47 @@ def main():
             f"{s['name'].split(':')[0]}: {s.get('count', 0)}件" for s in steps if s.get("count")
         )
 
+        # Build V2 metrics for dashboard display
+        v2_metrics: dict = {
+            "run_id": run_id,
+            "total_duration_sec": int(elapsed),
+            "lp_status": lp_check["status"],
+            "steps": {s["name"]: s["status"] for s in steps},
+        }
+        # Extract counts from each step for dashboard metric chips
+        for s in steps:
+            name = s["name"]
+            count = s.get("count", 0)
+            if "A0" in name:
+                v2_metrics["micro_markets_generated"] = count
+            elif "A1q" in name:
+                v2_metrics["a1q_passed"] = count
+                try:
+                    v2_metrics["a1q_failed"] = len(micro_markets) - count
+                except NameError:
+                    v2_metrics["a1q_failed"] = 0
+            elif "A1d" in name:
+                v2_metrics["a1d_passed"] = count
+                try:
+                    v2_metrics["a1d_failed"] = len(a1q_passed[:5]) - count
+                except NameError:
+                    v2_metrics["a1d_failed"] = 0
+            elif "探索レーン" in name:
+                v2_metrics["exploration_lanes"] = count
+            elif "競合" in name:
+                v2_metrics["competitors_20"] = count
+            elif "オファー" in name:
+                v2_metrics["offers_generated"] = count
+            elif "ガード" in name:
+                if lp_check["status"] == "READY":
+                    v2_metrics["lp_ready"] = 1
+                else:
+                    v2_metrics["lp_blocked"] = 1
+
         update_status(
             "orchestrate_v2", final_status,
             f"完了 ({total_duration}) — {step_summary}",
-            {
-                "run_id": run_id,
-                "total_duration_sec": int(elapsed),
-                "lp_status": lp_check["status"],
-                "steps": {s["name"]: s["status"] for s in steps},
-            },
+            v2_metrics,
         )
         logger.info(f"V2 パイプライン完了: {total_duration}")
 
