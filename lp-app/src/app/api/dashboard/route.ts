@@ -68,8 +68,8 @@ export async function GET() {
     } catch { /* sheet may not exist yet */ }
 
     const scriptLabels: Record<string, string> = {
+      orchestrate_v2: "V2\u30D1\u30A4\u30D7\u30E9\u30A4\u30F3",
       A_market_research: "\u5E02\u5834\u8ABF\u67FB",
-      B_market_selection: "\u5E02\u5834\u9078\u5B9A",
       C_competitor_analysis: "\u7AF6\u5408\u8ABF\u67FB",
       "0_idea_generator": "\u4E8B\u696D\u6848\u751F\u6210",
       "1_lp_generator": "LP\u751F\u6210",
@@ -77,7 +77,6 @@ export async function GET() {
       "3_form_sales": "\u30D5\u30A9\u30FC\u30E0\u55B6\u696D",
       "4_analytics_reporter": "\u5206\u6790\u30FB\u6539\u5584",
       "5_slack_reporter": "Slack\u30EC\u30DD\u30FC\u30C8",
-      "6_ads_monitor": "\u5E83\u544A\u30E2\u30CB\u30BF\u30EA\u30F3\u30B0",
     };
 
     // Build a lookup from pipeline_status rows
