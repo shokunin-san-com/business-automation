@@ -86,8 +86,14 @@ def _generate_gemini(
     max_tokens: int = 4096,
     temperature: float = 0.7,
     response_mime_type: str | None = None,
+    use_search: bool = False,
 ) -> str:
-    """Call Gemini API and return text."""
+    """Call Gemini API and return text.
+
+    Args:
+        use_search: Enable Google Search grounding for evidence-based tasks.
+                    NOTE: Cannot be used with response_mime_type (JSON mode).
+    """
     import google.generativeai as genai
 
     model = _get_gemini_model()
@@ -99,15 +105,24 @@ def _generate_gemini(
         max_output_tokens=max_tokens,
         temperature=temperature,
     )
-    if response_mime_type:
+    if response_mime_type and not use_search:
         generation_config = genai.GenerationConfig(
             max_output_tokens=max_tokens,
             temperature=temperature,
             response_mime_type=response_mime_type,
         )
 
-    logger.info(f"Gemini API call: model={GEMINI_MODEL}, max_tokens={max_tokens}")
-    response = model.generate_content(full_prompt, generation_config=generation_config)
+    # Google Search grounding tool for evidence-based tasks
+    tools = None
+    if use_search:
+        tools = [genai.Tool(google_search_retrieval=genai.GoogleSearchRetrieval())]
+
+    logger.info(f"Gemini API call: model={GEMINI_MODEL}, max_tokens={max_tokens}, search={use_search}")
+    response = model.generate_content(
+        full_prompt,
+        generation_config=generation_config,
+        tools=tools,
+    )
     text = response.text
     logger.info(f"Gemini API response: {len(text)} chars")
     return text
@@ -162,12 +177,15 @@ def generate_json(
     model: str | None = None,
     max_tokens: int = 4096,
     temperature: float = 0.5,
+    use_search: bool = False,
 ) -> dict | list:
     """Send a prompt to an AI model and parse the response as JSON.
 
     Tries Gemini (with JSON mode) first, falls back to Claude on failure.
+    When use_search=True, disables JSON mode (incompatible with grounding)
+    and relies on prompt to request JSON output.
     """
-    # 1. Try Gemini with JSON mode (primary)
+    # 1. Try Gemini (primary)
     if GEMINI_API_KEY:
         try:
             raw = _generate_gemini(
@@ -175,7 +193,8 @@ def generate_json(
                 system=system,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                response_mime_type="application/json",
+                response_mime_type=None if use_search else "application/json",
+                use_search=use_search,
             )
             return _parse_json_response(raw)
         except Exception as e:
@@ -206,6 +225,7 @@ def generate_json_with_retry(
     temperature: float = 0.5,
     max_retries: int = 3,
     validator=None,
+    use_search: bool = False,
 ) -> dict | list:
     """Generate JSON with automatic retry and optional validation.
 
@@ -241,6 +261,7 @@ def generate_json_with_retry(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=temp,
+                use_search=use_search,
             )
         except Exception as e:
             logger.warning(f"API call failed on attempt {attempt}: {e}")

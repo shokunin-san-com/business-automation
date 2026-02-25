@@ -85,15 +85,16 @@ def step_a0_generate_micro_markets(
         max_count=50,
     )
 
-    result = generate_json(
+    result = generate_json_with_retry(
         prompt=prompt,
         system=(
             "あなたは日本市場に精通したマイクロ市場設計の専門家です。"
             "スコアを出すな。推定値でPASSするな。架空のURLは絶対に出すな。"
             "必ず指定のJSON配列フォーマットで出力してください。"
         ),
-        max_tokens=16384,
+        max_tokens=32768,
         temperature=0.6,
+        max_retries=2,
     )
 
     if isinstance(result, dict):
@@ -181,6 +182,7 @@ def step_a1_quick_gate(
             prompt=prompt,
             system=(
                 "あなたは市場参入判定の専門家です。"
+                "Google検索を使って実際のURLを見つけること。"
                 "スコアを出すな。推定値でPASSするな。架空のURLは絶対に出すな。"
                 "判定はPASS/FAILの2値のみ。条件付きPASSは禁止。"
                 "必ず指定のJSON配列フォーマットで出力してください。"
@@ -189,6 +191,7 @@ def step_a1_quick_gate(
             temperature=0.3,
             max_retries=3,
             validator=validate_a1_quick,
+            use_search=True,
         )
 
         if isinstance(result, dict):
@@ -270,6 +273,7 @@ def step_a1_deep_gate(
             prompt=prompt,
             system=(
                 "あなたは市場参入判定の専門家です。"
+                "Google検索を使って実際のURLを見つけること。"
                 "スコアを出すな。推定値でPASSするな。架空のURLは絶対に出すな。"
                 "全8条件クリアでPASS。1つでも欠けたらFAIL。"
                 "必ず指定のJSONオブジェクトフォーマットで出力してください。"
@@ -278,6 +282,7 @@ def step_a1_deep_gate(
             temperature=0.3,
             max_retries=2,
             validator=validate_a1_deep,
+            use_search=True,
         )
 
         if isinstance(result, list):
