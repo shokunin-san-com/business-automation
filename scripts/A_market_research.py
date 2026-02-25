@@ -149,45 +149,62 @@ def step_a1_quick_gate(
     micro_markets: list[dict],
     knowledge_context: str,
     run_id: str,
+    batch_size: int = 10,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Apply shallow gate to all micro-markets.
+    Apply shallow gate to all micro-markets in batches.
 
     Requirements per market:
     - Payment evidence URL (>=1)
     - At least 1 category (demand/seriousness/tailwind) with value + URL
 
+    Markets are processed in batches to avoid Gemini response truncation.
+
     Returns: (passed_list, full_results_for_log)
     """
     template = jinja_env.get_template("a1_quick_gate_prompt.j2")
-    prompt = template.render(
-        micro_markets_json=json.dumps(micro_markets, ensure_ascii=False),
-        knowledge_context=knowledge_context,
-    )
+    all_results: list[dict] = []
 
-    result = generate_json_with_retry(
-        prompt=prompt,
-        system=(
-            "あなたは市場参入判定の専門家です。"
-            "スコアを出すな。推定値でPASSするな。架空のURLは絶対に出すな。"
-            "判定はPASS/FAILの2値のみ。条件付きPASSは禁止。"
-            "必ず指定のJSON配列フォーマットで出力してください。"
-        ),
-        max_tokens=16384,
-        temperature=0.3,
-        max_retries=2,
-        validator=validate_a1_quick,
-    )
+    # Split into batches to prevent response truncation
+    batches = [micro_markets[i:i + batch_size] for i in range(0, len(micro_markets), batch_size)]
+    logger.info(f"A1q: Processing {len(micro_markets)} markets in {len(batches)} batches (batch_size={batch_size})")
 
-    if isinstance(result, dict):
-        result = [result]
+    for batch_idx, batch in enumerate(batches):
+        logger.info(f"A1q: Batch {batch_idx + 1}/{len(batches)} ({len(batch)} markets)")
 
-    passed = [r for r in result if r.get("status") == "PASS"]
-    failed = [r for r in result if r.get("status") != "PASS"]
+        prompt = template.render(
+            micro_markets_json=json.dumps(batch, ensure_ascii=False),
+            knowledge_context=knowledge_context,
+        )
 
-    logger.info(f"A1q: {len(passed)} PASS / {len(failed)} FAIL out of {len(result)}")
+        result = generate_json_with_retry(
+            prompt=prompt,
+            system=(
+                "あなたは市場参入判定の専門家です。"
+                "スコアを出すな。推定値でPASSするな。架空のURLは絶対に出すな。"
+                "判定はPASS/FAILの2値のみ。条件付きPASSは禁止。"
+                "必ず指定のJSON配列フォーマットで出力してください。"
+            ),
+            max_tokens=16384,
+            temperature=0.3,
+            max_retries=3,
+            validator=validate_a1_quick,
+        )
 
-    return passed, result
+        if isinstance(result, dict):
+            result = [result]
+        if isinstance(result, list):
+            all_results.extend(result)
+            logger.info(f"A1q: Batch {batch_idx + 1} → {len(result)} results")
+        else:
+            logger.warning(f"A1q: Batch {batch_idx + 1} returned unexpected type: {type(result)}")
+
+    passed = [r for r in all_results if r.get("status") == "PASS"]
+    failed = [r for r in all_results if r.get("status") != "PASS"]
+
+    logger.info(f"A1q: {len(passed)} PASS / {len(failed)} FAIL out of {len(all_results)}")
+
+    return passed, all_results
 
 
 # ---------------------------------------------------------------------------

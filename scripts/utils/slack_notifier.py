@@ -26,7 +26,13 @@ def _slack_mrkdwn_to_gchat(text: str) -> str:
       - ~strike~ → ~strike~ (same)
       - `code` stays as `code`
       - :emoji: → strip colons for readability
+      - <URL|label> → label (URL) — Google Chat auto-links URLs
     """
+    # Convert Slack link format <URL|label> → label (URL)
+    text = re.sub(r"<(https?://[^|>]+)\|([^>]+)>", r"\2 ( \1 )", text)
+    # Convert bare Slack links <URL> → URL
+    text = re.sub(r"<(https?://[^>]+)>", r"\1", text)
+
     # Convert Slack emoji shortcodes to unicode or plain text
     emoji_map = {
         ":mega:": "📢", ":warning:": "⚠️", ":no_entry:": "🛑",

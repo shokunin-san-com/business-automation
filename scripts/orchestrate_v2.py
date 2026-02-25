@@ -235,6 +235,13 @@ def send_pipeline_report(
         for m in lp_check.get("missing", []):
             lines.append(f"    → {m}")
 
+    # Spreadsheet link
+    from config import GOOGLE_SHEETS_ID
+    if GOOGLE_SHEETS_ID:
+        ss_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/edit"
+        lines.append("")
+        lines.append(f"📊 <{ss_url}|スプレッドシートを開く>")
+
     notify("\n".join(lines))
 
 
@@ -257,6 +264,13 @@ def _abort_pipeline(steps: list[dict], run_id: str, start_time: float):
         if s.get("errors"):
             for e in s["errors"][:3]:
                 lines.append(f"    → {e}")
+
+    # Spreadsheet link
+    from config import GOOGLE_SHEETS_ID
+    if GOOGLE_SHEETS_ID:
+        ss_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/edit"
+        lines.append("")
+        lines.append(f"📊 <{ss_url}|スプレッドシートを開く>")
 
     notify("\n".join(lines))
     update_status("orchestrate_v2", "error", f"パイプライン停止 ({total_duration})")
