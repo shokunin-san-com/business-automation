@@ -359,11 +359,11 @@ def wait_for_completion(execution_name: str, timeout: int = 2400, interval: int 
 
 def run_with_verification() -> bool:
     """
-    Run orchestrate_abc0 with before/after snapshot verification.
+    Run orchestrate_v2 with before/after snapshot verification.
 
     Flow:
       1. Save before-snapshot
-      2. Start orchestrate_abc0 via Cloud Run
+      2. Start orchestrate_v2 via Cloud Run
       3. Wait for completion (max 40 min)
       4. Take after-snapshot and compute diff score
       5. Generate agent commentary on results
@@ -384,14 +384,14 @@ def run_with_verification() -> bool:
     before_path = save_snapshot()
     notify("📸 実行前スナップショット取得完了", f"保存先: {before_path}")
 
-    # Step 2: Start orchestrate_abc0
+    # Step 2: Start orchestrate_v2
     logger.info("=" * 60)
-    logger.info("run-with-verification: Step 2 — Starting orchestrate_abc0")
+    logger.info("run-with-verification: Step 2 — Starting orchestrate_v2")
     logger.info("=" * 60)
-    run_result = run_job("orchestrate_abc0")
+    run_result = run_job("orchestrate_v2")
     execution_name = run_result.get("execution_name", "")
     notify(
-        "🚀 orchestrate_abc0 起動",
+        "🔬 orchestrate_v2 起動",
         f"execution: {execution_name}\njob: {run_result.get('job_name', '')}",
     )
 
@@ -406,7 +406,7 @@ def run_with_verification() -> bool:
         elapsed = time.time() - start_time
         error_msg = str(e)
         logger.error("Job failed or timed out: %s", error_msg)
-        notify(f"❌ orchestrate_abc0 失敗 ({elapsed:.0f}秒)", error_msg, is_error=True)
+        notify(f"❌ orchestrate_v2 失敗 ({elapsed:.0f}秒)", error_msg, is_error=True)
         record_run(
             task="run-with-verification",
             duration_seconds=elapsed,
@@ -490,7 +490,7 @@ def main():
     parser.add_argument(
         "--run-with-verification",
         action="store_true",
-        help="Run orchestrate_abc0 with before/after snapshot verification",
+        help="Run orchestrate_v2 with before/after snapshot verification",
     )
     parser.add_argument(
         "--task",

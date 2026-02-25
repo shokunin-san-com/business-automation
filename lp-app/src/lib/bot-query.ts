@@ -832,20 +832,16 @@ async function getPipelineStatus(): Promise<string> {
       return "⚙️ *パイプライン状況*\n\nまだステータスデータがありません。";
     }
 
+    // V2パイプライン専用ラベル（V1は完全廃止済み）
     const labels: Record<string, string> = {
-      A_market_research: "🔍 市場調査",
-      B_market_selection: "🎯 市場選定",
-      C_competitor_analysis: "⚔️ 競合調査",
-      "0_idea_generator": "💡 事業案生成",
+      orchestrate_v2: "🔬 V2パイプライン",
       "1_lp_generator": "🚀 LP生成",
       "2_sns_poster": "📢 SNS投稿",
       "3_form_sales": "✉️ フォーム営業",
       "4_analytics_reporter": "📈 分析・改善",
       "5_slack_reporter": "💬 Slackレポート",
-      "6_ads_monitor": "💰 広告監視",
       "7_learning_engine": "🧠 学習エンジン",
-      "8_ads_creator": "📣 広告自動出稿",
-      orchestrate_abc0: "🤖 自律型パイプライン",
+      "9_expansion_engine": "🚀 拡張エンジン",
     };
 
     const statusEmoji: Record<string, string> = {

@@ -1,20 +1,17 @@
 """
-Cloud Run Jobs runner — start pipeline jobs on demand.
+Cloud Run Jobs runner — start V2 pipeline jobs on demand.
 
-Each pipeline script has its own Cloud Run Job:
-  SCRIPT_NAME          →  Cloud Run Job name
-  A_market_research    →  market-research
-  B_market_selection   →  market-selection
-  C_competitor_analysis→  competitor-analysis
-  0_idea_generator     →  idea-generator
+V2 pipeline script → Cloud Run Job mapping:
+  orchestrate_v2       →  orchestrate-v2
   1_lp_generator       →  lp-generator
   2_sns_poster         →  sns-poster
   3_form_sales         →  form-sales
   4_analytics_reporter →  analytics-reporter
   5_slack_reporter     →  slack-reporter
-  6_ads_monitor        →  ads-monitor
   7_learning_engine    →  learning-engine
-  orchestrate_abc0     →  (no dedicated job — runs via market-research with override)
+  9_expansion_engine   →  expansion-engine
+
+V1 scripts (A/B/C/0/orchestrate_abc0, 6_ads_monitor, 8_ads_creator) are DEPRECATED.
 """
 
 from __future__ import annotations
@@ -30,18 +27,16 @@ _client: run_v2.JobsClient | None = None
 SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 
 # Maps SCRIPT_NAME → Cloud Run Job name
+# V2パイプライン専用（V1ジョブは完全廃止）
 SCRIPT_TO_JOB = {
-    "A_market_research": "market-research",
-    "B_market_selection": "market-selection",
-    "C_competitor_analysis": "competitor-analysis",
-    "0_idea_generator": "idea-generator",
+    "orchestrate_v2": "orchestrate-v2",
     "1_lp_generator": "lp-generator",
     "2_sns_poster": "sns-poster",
     "3_form_sales": "form-sales",
     "4_analytics_reporter": "analytics-reporter",
     "5_slack_reporter": "slack-reporter",
-    "6_ads_monitor": "ads-monitor",
     "7_learning_engine": "learning-engine",
+    "9_expansion_engine": "expansion-engine",
 }
 
 
@@ -57,15 +52,14 @@ def run_job(script_name: str) -> dict:
     """
     Run a Cloud Run Job for the given script.
 
-    If the script has a dedicated Cloud Run Job (e.g. 'A_market_research' → 'market-research'),
-    it runs that job directly (SCRIPT_NAME is already baked in).
+    If the script has a dedicated Cloud Run Job, it runs that job directly.
 
-    For scripts without a dedicated job (e.g. 'orchestrate_abc0'), it uses
-    'market-research' job with a SCRIPT_NAME environment variable override.
+    For scripts without a dedicated job, it uses orchestrate-v2 job with
+    a SCRIPT_NAME environment variable override.
 
     Args:
-        script_name: The script key from SCRIPT_MAP in run.py,
-                     e.g. 'orchestrate_abc0', 'A_market_research'.
+        script_name: The V2 script key from SCRIPT_MAP in run.py,
+                     e.g. 'orchestrate_v2', '1_lp_generator'.
 
     Returns:
         Dict with execution_name, script_name, job_name, and status.
@@ -78,8 +72,8 @@ def run_job(script_name: str) -> dict:
         cloud_run_job_name = SCRIPT_TO_JOB[script_name]
         use_override = False
     else:
-        # No dedicated job — use market-research with SCRIPT_NAME override
-        cloud_run_job_name = "market-research"
+        # No dedicated job — use orchestrate-v2 with SCRIPT_NAME override
+        cloud_run_job_name = "orchestrate-v2"
         use_override = True
 
     job_full_name = (

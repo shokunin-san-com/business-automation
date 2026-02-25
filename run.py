@@ -10,21 +10,25 @@ import os
 import sys
 import importlib
 
+# V2パイプライン専用ディスパッチ
+# A_market_research, C_competitor_analysis, 0_idea_generator は
+# orchestrate_v2.py から内部呼び出しされるV2コア部品
 SCRIPT_MAP = {
+    # V2 コア部品（orchestrate_v2 経由で実行）
     "A_market_research": "scripts.A_market_research",
-    "B_market_selection": "scripts.B_market_selection",
     "C_competitor_analysis": "scripts.C_competitor_analysis",
     "0_idea_generator": "scripts.0_idea_generator",
+    # V2 独立スクリプト
+    "orchestrate_v2": "scripts.orchestrate_v2",
     "1_lp_generator": "scripts.1_lp_generator",
     "2_sns_poster": "scripts.2_sns_poster",
     "3_form_sales": "scripts.3_form_sales",
     "4_analytics_reporter": "scripts.4_analytics_reporter",
     "5_slack_reporter": "scripts.5_slack_reporter",
-    "6_ads_monitor": "scripts.6_ads_monitor",
     "7_learning_engine": "scripts.7_learning_engine",
-    "8_ads_creator": "scripts.8_ads_creator",
-    # "orchestrate_abc0": "scripts.orchestrate_abc0",  # v1 — deprecated in v2
-    "orchestrate_v2": "scripts.orchestrate_v2",
+    "9_expansion_engine": "scripts.9_expansion_engine",
+    # V1 廃止済み（実行するとエラー）:
+    # B_market_selection, 6_ads_monitor, 8_ads_creator, orchestrate_abc0
 }
 
 

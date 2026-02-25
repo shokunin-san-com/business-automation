@@ -1,47 +1,42 @@
-# Business Automation — Cron Jobs
+# Business Automation V2 — Cron Jobs
 # Install: crontab crontab.txt
 # Check: crontab -l
 #
-# All scripts run in the project's Python venv.
-# Logs are written to data/logs/
+# NOTE: 本番はCloud Run Jobs + Cloud Schedulerで実行。
+# このファイルはローカル開発・バックアップ用。
+#
+# V1スクリプト（B_market_selection, 6_ads_monitor, 8_ads_creator,
+# orchestrate_abc0）は完全廃止。実行しないこと。
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 PROJECT=/Users/miyu/dev/business-automation
 PYTHON=$PROJECT/.venv/bin/python
 
-# --- 毎週日曜 20:00 — 市場調査（探索フェーズ Step 1） ---
-0 20 * * 0  cd $PROJECT && $PYTHON scripts/A_market_research.py >> data/logs/cron.log 2>&1
+# ═══════════════════════════════════════════════════════════
+# V2パイプライン（本番はCloud Schedulerで管理）
+# ═══════════════════════════════════════════════════════════
 
-# --- 毎週日曜 22:00 — 市場選定スコアリング（探索フェーズ Step 2） ---
-0 22 * * 0  cd $PROJECT && $PYTHON scripts/B_market_selection.py >> data/logs/cron.log 2>&1
+# --- 毎週日曜 20:00 — V2パイプライン全体実行 ---
+0 20 * * 0  cd $PROJECT && $PYTHON scripts/orchestrate_v2.py >> data/logs/cron.log 2>&1
 
-# --- 毎週月曜 4:00 — 競合調査（探索フェーズ Step 3） ---
-0 4 * * 1  cd $PROJECT && $PYTHON scripts/C_competitor_analysis.py >> data/logs/cron.log 2>&1
+# --- 毎週月-金 11:00 — LP自動生成 ---
+0 11 * * 1-5  cd $PROJECT && $PYTHON scripts/1_lp_generator.py >> data/logs/cron.log 2>&1
 
-# --- 毎日 6:00 — 事業案自動生成（3件/日） → Slack通知 ---
-0 6 * * *  cd $PROJECT && $PYTHON scripts/0_idea_generator.py >> data/logs/cron.log 2>&1
-
-# --- 毎日 9:00 — activeな事業案のLP自動生成 ---
-0 9 * * *  cd $PROJECT && $PYTHON scripts/1_lp_generator.py >> data/logs/cron.log 2>&1
-
-# --- 毎日 10:00, 18:00 — SNS自動投稿 (X + LinkedIn) ---
+# --- 毎日 10:00, 18:00 — SNS自動投稿 ---
 0 10,18 * * *  cd $PROJECT && $PYTHON scripts/2_sns_poster.py >> data/logs/cron.log 2>&1
 
-# --- 平日 11:00 — フォーム営業自動化 ---
-0 11 * * 1-5  cd $PROJECT && $PYTHON scripts/3_form_sales.py >> data/logs/cron.log 2>&1
+# --- 平日 13:00 — フォーム営業 ---
+0 13 * * 1-5  cd $PROJECT && $PYTHON scripts/3_form_sales.py >> data/logs/cron.log 2>&1
 
-# --- 毎日 1:00 — GA4分析・改善提案生成 ---
-0 1 * * *  cd $PROJECT && $PYTHON scripts/4_analytics_reporter.py >> data/logs/cron.log 2>&1
+# --- 毎日 18:00 — 分析・改善 + 下流KPI集計 ---
+0 18 * * *  cd $PROJECT && $PYTHON scripts/4_analytics_reporter.py >> data/logs/cron.log 2>&1
 
-# --- 毎時間 — Google Ads監視・入札自動調整（24/365稼働） ---
-0 * * * *  cd $PROJECT && $PYTHON scripts/6_ads_monitor.py >> data/logs/cron.log 2>&1
+# --- 毎日 8:00 — Slackレポート ---
+0 8 * * *  cd $PROJECT && $PYTHON scripts/5_slack_reporter.py >> data/logs/cron.log 2>&1
 
-# --- 毎週月曜 8:00 — 週次Slackレポート ---
-0 8 * * 1  cd $PROJECT && $PYTHON scripts/5_slack_reporter.py >> data/logs/cron.log 2>&1
-
-# --- 毎日 2:00 — 学習エンジン + 損切り判定 ---
+# --- 毎日 2:00 — 学習エンジン（V2+下流+拡張） ---
 0 2 * * *  cd $PROJECT && $PYTHON scripts/7_learning_engine.py >> data/logs/cron.log 2>&1
 
-# --- 毎週月曜 7:00 — 広告自動出稿 ---
-0 7 * * 1  cd $PROJECT && $PYTHON scripts/8_ads_creator.py >> data/logs/cron.log 2>&1
+# --- 毎日 3:00 — 拡張エンジン（勝ちパターン検出・SOP生成） ---
+0 3 * * *  cd $PROJECT && $PYTHON scripts/9_expansion_engine.py >> data/logs/cron.log 2>&1

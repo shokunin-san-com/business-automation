@@ -1,13 +1,14 @@
 """
-Consistency Checker — validates pipeline output integrity via snapshot diff.
+Consistency Checker — validates V2 pipeline output integrity via snapshot diff.
 
-Takes snapshots of Google Sheets before and after orchestrate_abc0 execution,
+Takes snapshots of Google Sheets before and after orchestrate_v2 execution,
 computes a consistency score (0-100) based on the DELTA, and alerts if score < 60.
 
-Scoring breakdown (100 points total):
-  - market_research rows added:     40 pts (vs expected = markets × segments)
-  - market_selection selected:      30 pts (vs expected = selection_top_n)
-  - business_ideas rows added:      20 pts (vs expected = ideas_per_run)
+V2 Scoring breakdown (100 points total):
+  - micro_market_list rows added:   30 pts (A0 micro-market generation)
+  - gate_decision_log entries:      25 pts (A1q/A1d gate decisions)
+  - competitor_20_log entries:      20 pts (C: competitor analysis)
+  - offer_3_log entries:            15 pts (0: offer generation)
   - No pipeline errors:             10 pts (no ERROR in recent logs)
 """
 
@@ -107,14 +108,14 @@ def _no_errors_in_logs(minutes: int = 60) -> bool:
 
 def save_snapshot(path: str = DEFAULT_SNAPSHOT_PATH) -> str:
     """
-    Save current Sheets state to a JSON file (call BEFORE pipeline execution).
+    Save current V2 Sheets state to a JSON file (call BEFORE pipeline execution).
 
     Captures:
-      - market_research row count
-      - market_selection row count
-      - business_ideas row count
-      - selected_count (market_selection rows with status='selected')
-      - ideas_approved (business_ideas rows with status='approved')
+      - micro_market_list row count
+      - gate_decision_log row count (+ PASS count)
+      - competitor_20_log row count
+      - offer_3_log row count
+      - lp_ready_log row count (+ READY count)
 
     Args:
         path: File path to save the snapshot JSON.
@@ -124,21 +125,27 @@ def save_snapshot(path: str = DEFAULT_SNAPSHOT_PATH) -> str:
     """
     snapshot = {
         "taken_at": datetime.now(JST).isoformat(),
-        "market_research": _count_rows("market_research"),
-        "market_selection": _count_rows("market_selection"),
-        "business_ideas": _count_rows("business_ideas"),
-        "selected_count": _count_status("market_selection", "selected"),
-        "ideas_approved": _count_status("business_ideas", "approved"),
+        "micro_market_list": _count_rows("micro_market_list"),
+        "gate_decision_log": _count_rows("gate_decision_log"),
+        "gate_pass_count": _count_status("gate_decision_log", "PASS"),
+        "competitor_20_log": _count_rows("competitor_20_log"),
+        "offer_3_log": _count_rows("offer_3_log"),
+        "lp_ready_log": _count_rows("lp_ready_log"),
+        "lp_ready_count": _count_status("lp_ready_log", "READY"),
     }
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(snapshot, f, ensure_ascii=False, indent=2)
 
     logger.info(
-        "Snapshot saved: MR=%d, MS=%d, BI=%d → %s",
-        snapshot["market_research"],
-        snapshot["market_selection"],
-        snapshot["business_ideas"],
+        "Snapshot saved: MML=%d, GDL=%d(PASS=%d), C20=%d, O3=%d, LR=%d(READY=%d) → %s",
+        snapshot["micro_market_list"],
+        snapshot["gate_decision_log"],
+        snapshot["gate_pass_count"],
+        snapshot["competitor_20_log"],
+        snapshot["offer_3_log"],
+        snapshot["lp_ready_log"],
+        snapshot["lp_ready_count"],
         path,
     )
     return path
@@ -181,16 +188,20 @@ def check_with_snapshot(before_path: str = DEFAULT_SNAPSHOT_PATH) -> Consistency
 
     # Take current state as "after"
     after = {
-        "market_research": _count_rows("market_research"),
-        "market_selection": _count_rows("market_selection"),
-        "business_ideas": _count_rows("business_ideas"),
-        "selected_count": _count_status("market_selection", "selected"),
-        "ideas_approved": _count_status("business_ideas", "approved"),
+        "micro_market_list": _count_rows("micro_market_list"),
+        "gate_decision_log": _count_rows("gate_decision_log"),
+        "gate_pass_count": _count_status("gate_decision_log", "PASS"),
+        "competitor_20_log": _count_rows("competitor_20_log"),
+        "offer_3_log": _count_rows("offer_3_log"),
+        "lp_ready_log": _count_rows("lp_ready_log"),
+        "lp_ready_count": _count_status("lp_ready_log", "READY"),
     }
 
     # Calculate diff (only numeric keys)
-    diff_keys = ["market_research", "market_selection", "business_ideas",
-                 "selected_count", "ideas_approved"]
+    diff_keys = [
+        "micro_market_list", "gate_decision_log", "gate_pass_count",
+        "competitor_20_log", "offer_3_log", "lp_ready_log", "lp_ready_count",
+    ]
     diff = {k: after[k] - before.get(k, 0) for k in diff_keys}
 
     # Score based on diff
@@ -211,18 +222,14 @@ def check_with_snapshot(before_path: str = DEFAULT_SNAPSHOT_PATH) -> Consistency
 
 def _calc_score(diff: dict) -> tuple[int, dict, list[str]]:
     """
-    Calculate consistency score from diff values.
+    Calculate V2 consistency score from diff values.
 
-    Uses settings sheet to determine expected counts:
-      - expected_research = len(exploration_markets) × exploration_segments_per_market
-      - expected_selected = selection_top_n
-      - expected_ideas    = ideas_per_run
-
-    Scoring:
-      - 市場調査:   max 40 pts (achievement rate × 40)
-      - 市場選定:   max 30 pts (achievement rate × 30)
-      - 事業案生成: max 20 pts (achievement rate × 20)
-      - エラーなし: max 10 pts (no ERROR logs in last 60 min)
+    V2 Scoring (evidence-based pipeline):
+      - マイクロ市場生成 (A0):    max 30 pts
+      - ゲート判定 (A1q/A1d):     max 25 pts
+      - 競合20社分析 (C):         max 20 pts
+      - オファー生成 (0):         max 15 pts
+      - エラーなし:               max 10 pts
 
     Returns:
         Tuple of (total_score, breakdown_dict, errors_list).
@@ -234,40 +241,47 @@ def _calc_score(diff: dict) -> tuple[int, dict, list[str]]:
     exploration_markets = settings.get("exploration_markets", "")
     markets_count = len([m.strip() for m in exploration_markets.split(",") if m.strip()]) if exploration_markets else 1
     seg_per_mkt = _safe_int(settings.get("exploration_segments_per_market", "3"))
-    top_n = _safe_int(settings.get("selection_top_n", "3"))
-    ideas_per = _safe_int(settings.get("ideas_per_run", "3"))
 
-    expected_research = markets_count * seg_per_mkt
-    expected_selected = top_n
-    expected_ideas = ideas_per
+    expected_micro_markets = markets_count * seg_per_mkt
+    # Gate decisions should exist for at least top-N markets
+    expected_gate_decisions = _safe_int(settings.get("a1_deep_top_n", "5"))
+    # Competitor analysis for PASS markets (at least 1)
+    expected_competitor = max(diff.get("gate_pass_count", 0), 1)
+    # Offers for markets with competitor analysis
+    expected_offers = max(diff.get("gate_pass_count", 0), 1)
 
     # Achievement rates (clamped to 1.0)
-    r1 = min(diff.get("market_research", 0) / max(expected_research, 1), 1.0)
-    r2 = min(diff.get("selected_count", 0) / max(expected_selected, 1), 1.0)
-    r3 = min(diff.get("business_ideas", 0) / max(expected_ideas, 1), 1.0)
+    r1 = min(diff.get("micro_market_list", 0) / max(expected_micro_markets, 1), 1.0)
+    r2 = min(diff.get("gate_decision_log", 0) / max(expected_gate_decisions, 1), 1.0)
+    r3 = min(diff.get("competitor_20_log", 0) / max(expected_competitor, 1), 1.0)
+    r4 = min(diff.get("offer_3_log", 0) / max(expected_offers, 1), 1.0)
 
-    s1 = round(r1 * 40)  # 市場調査   max 40
-    s2 = round(r2 * 30)  # 市場選定   max 30
-    s3 = round(r3 * 20)  # 事業案生成 max 20
-    s4 = 10 if _no_errors_in_logs(minutes=60) else 0  # エラーなし max 10
+    s1 = round(r1 * 30)  # マイクロ市場生成 max 30
+    s2 = round(r2 * 25)  # ゲート判定       max 25
+    s3 = round(r3 * 20)  # 競合20社分析     max 20
+    s4 = round(r4 * 15)  # オファー生成     max 15
+    s5 = 10 if _no_errors_in_logs(minutes=60) else 0  # エラーなし max 10
 
-    total = s1 + s2 + s3 + s4
+    total = s1 + s2 + s3 + s4 + s5
 
     # Track errors
-    if diff.get("market_research", 0) == 0:
-        errors.append("市場調査の行が追加されていません")
-    if diff.get("selected_count", 0) == 0:
-        errors.append("市場選定（selected）が追加されていません")
-    if diff.get("business_ideas", 0) == 0:
-        errors.append("事業案が生成されていません")
-    if s4 == 0:
+    if diff.get("micro_market_list", 0) == 0:
+        errors.append("マイクロ市場が生成されていません (A0)")
+    if diff.get("gate_decision_log", 0) == 0:
+        errors.append("ゲート判定が実行されていません (A1)")
+    if diff.get("competitor_20_log", 0) == 0 and diff.get("gate_pass_count", 0) > 0:
+        errors.append("PASSした市場の競合分析が実行されていません (C)")
+    if diff.get("offer_3_log", 0) == 0 and diff.get("gate_pass_count", 0) > 0:
+        errors.append("PASSした市場のオファーが生成されていません (0)")
+    if s5 == 0:
         errors.append("直近60分にERRORログが検出されています")
 
     breakdown = {
-        "市場調査": f"{s1}/40  (期待{expected_research}件 → 実績+{diff.get('market_research', 0)}件)",
-        "市場選定": f"{s2}/30  (期待{expected_selected}件 → 実績+{diff.get('selected_count', 0)}件)",
-        "事業案生成": f"{s3}/20  (期待{expected_ideas}件 → 実績+{diff.get('business_ideas', 0)}件)",
-        "エラーなし": f"{s4}/10",
+        "マイクロ市場(A0)": f"{s1}/30  (期待{expected_micro_markets}件 → 実績+{diff.get('micro_market_list', 0)}件)",
+        "ゲート判定(A1)": f"{s2}/25  (期待{expected_gate_decisions}件 → 実績+{diff.get('gate_decision_log', 0)}件)",
+        "競合分析(C)": f"{s3}/20  (期待{expected_competitor}件 → 実績+{diff.get('competitor_20_log', 0)}件)",
+        "オファー(0)": f"{s4}/15  (期待{expected_offers}件 → 実績+{diff.get('offer_3_log', 0)}件)",
+        "エラーなし": f"{s5}/10",
     }
 
     return total, breakdown, errors

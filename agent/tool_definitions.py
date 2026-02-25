@@ -105,8 +105,9 @@ TOOL_DEFINITIONS = [
         "name": "read_sheet",
         "description": (
             "Read data from a Google Sheets tab. Returns rows as a list of dicts. "
-            "Available sheets include: settings, market_research, market_selection, "
-            "competitor_analysis, business_ideas, knowledge_base, and more."
+            "Available sheets include: settings, micro_market_list, gate_decision_log, "
+            "competitor_20_log, offer_3_log, lp_ready_log, pipeline_status, "
+            "inquiry_log, deal_pipeline, downstream_kpi, winning_patterns, and more."
         ),
         "input_schema": {
             "type": "object",
@@ -115,7 +116,7 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": (
                         "Name of the worksheet tab to read "
-                        "(e.g. 'settings', 'market_research', 'business_ideas')."
+                        "(e.g. 'settings', 'micro_market_list', 'gate_decision_log')."
                     ),
                 },
                 "row_limit": {
@@ -138,22 +139,18 @@ TOOL_DEFINITIONS = [
     {
         "name": "run_pipeline_job",
         "description": (
-            "Start a Cloud Run Job execution for a specific pipeline script. "
+            "Start a Cloud Run Job execution for a specific V2 pipeline script. "
             "Each script has its own Cloud Run Job. "
             "Available scripts and their jobs: "
-            "A_market_research (market-research), "
-            "B_market_selection (market-selection), "
-            "C_competitor_analysis (competitor-analysis), "
-            "0_idea_generator (idea-generator), "
+            "orchestrate_v2 (orchestrate-v2), "
             "1_lp_generator (lp-generator), "
             "2_sns_poster (sns-poster), "
             "3_form_sales (form-sales), "
             "4_analytics_reporter (analytics-reporter), "
             "5_slack_reporter (slack-reporter), "
-            "6_ads_monitor (ads-monitor), "
-            "7_learning_engine (learning-engine). "
-            "Scripts without a dedicated job (e.g. orchestrate_abc0) "
-            "run via market-research with a SCRIPT_NAME override."
+            "7_learning_engine (learning-engine), "
+            "9_expansion_engine (expansion-engine). "
+            "V1 scripts (A_market_research, B_market_selection, etc.) are DEPRECATED — do NOT run them."
         ),
         "input_schema": {
             "type": "object",
@@ -161,9 +158,9 @@ TOOL_DEFINITIONS = [
                 "script_name": {
                     "type": "string",
                     "description": (
-                        "Script key from the pipeline dispatcher. "
-                        "Examples: 'A_market_research', 'B_market_selection', "
-                        "'0_idea_generator', 'orchestrate_abc0'."
+                        "Script key from the V2 pipeline dispatcher. "
+                        "Examples: 'orchestrate_v2', '1_lp_generator', "
+                        "'7_learning_engine', '9_expansion_engine'."
                     ),
                 },
             },
@@ -203,7 +200,7 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": (
                         "File path in the repository "
-                        "(e.g. 'agent/config.py', 'run.py', 'scripts/A_market_research.py')."
+                        "(e.g. 'agent/config.py', 'run.py', 'scripts/orchestrate_v2.py')."
                     ),
                 },
                 "ref": {
@@ -332,8 +329,8 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": (
                         "Cloud Run Job ID to trigger. "
-                        "Examples: 'market-research', 'lp-generator', "
-                        "'agent-orchestrator', 'orchestrate-v2'."
+                        "Examples: 'orchestrate-v2', 'lp-generator', "
+                        "'learning-engine', 'expansion-engine', 'agent-orchestrator'."
                     ),
                 },
                 "description": {

@@ -914,6 +914,21 @@ def send_pipeline_report(
 # Main orchestrator
 # =========================================================================
 def main():
+    # =======================================================================
+    # V1 DEPRECATED — このスクリプトはV2で完全廃止されました。
+    # orchestrate_v2.py の証拠ベースPASS/FAILゲート方式に移行済みです。
+    # =======================================================================
+    logger.warning("=" * 60)
+    logger.warning("orchestrate_abc0.py はV2で完全廃止されました。")
+    logger.warning("orchestrate_v2.py を使用してください。")
+    logger.warning("=" * 60)
+    update_status(
+        "orchestrate_abc0", "success",
+        "V1廃止済み — orchestrate_v2.py に移行済み",
+    )
+    return
+
+    # --- 以下は廃止済みコード（参照用に残置） ---
     start_time = time.time()
     logger.info("=" * 60)
     logger.info("ABC0 自律型パイプライン開始")
