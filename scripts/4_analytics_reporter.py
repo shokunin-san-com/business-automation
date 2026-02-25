@@ -21,6 +21,7 @@ from utils.sheets_client import (
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.learning_engine import get_learning_context
+from utils.downstream_metrics import aggregate_daily_downstream
 
 logger = get_logger("analytics_reporter", "analytics_reporter.log")
 
@@ -170,11 +171,32 @@ def main():
         except Exception as ze:
             logger.warning(f"Zero-continuity check failed: {ze}")
 
+        # --- Downstream KPI aggregation ---
+        downstream_kpi = {}
+        try:
+            update_status("4_analytics_reporter", "running", "下流KPI集計中...")
+            downstream_kpi = aggregate_daily_downstream()
+            logger.info(f"Downstream KPI: inquiries={downstream_kpi.get('total_inquiries', 0)}, "
+                        f"deals_won={downstream_kpi.get('deals_won', 0)}, "
+                        f"deal_rate={downstream_kpi.get('deal_rate', 0)}")
+            if downstream_kpi.get("total_inquiries", 0) > 0:
+                slack_notify(
+                    f":chart_with_downwards_trend: *下流KPI*: "
+                    f"問い合わせ {downstream_kpi['total_inquiries']}件 / "
+                    f"成約 {downstream_kpi.get('deals_won', 0)}件 / "
+                    f"成約率 {downstream_kpi.get('deal_rate', 0):.1%}"
+                )
+        except Exception as de:
+            logger.warning(f"Downstream KPI aggregation failed: {de}")
+
         total_pv = sum(m.get("pageviews", 0) for m in all_metrics)
         update_status("4_analytics_reporter", "success", f"{total_suggestions}件提案", {
             "suggestions": total_suggestions,
             "total_pageviews": total_pv,
             "lps_analyzed": len(active_ideas),
+            "downstream_inquiries": downstream_kpi.get("total_inquiries", 0),
+            "downstream_deals_won": downstream_kpi.get("deals_won", 0),
+            "downstream_deal_rate": downstream_kpi.get("deal_rate", 0),
         })
         logger.info(f"=== Analytics reporter complete: {total_suggestions} suggestions ===")
     except Exception as e:

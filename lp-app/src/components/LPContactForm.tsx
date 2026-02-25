@@ -7,13 +7,17 @@ interface Props {
   ctaText: string;
   email: string;
   businessId: string;
+  runId?: string;
+  sourceLpUrl?: string;
 }
 
-export default function LPContactForm({ ctaText, email, businessId }: Props) {
+export default function LPContactForm({ ctaText, email, businessId, runId, sourceLpUrl }: Props) {
   const [submitted, setSubmitted] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setSending(true);
     const form = e.currentTarget;
     const data = new FormData(form);
     const name = data.get("name") as string;
@@ -21,12 +25,33 @@ export default function LPContactForm({ ctaText, email, businessId }: Props) {
     const userEmail = data.get("email") as string;
     const message = data.get("message") as string;
 
-    const subject = encodeURIComponent(`[${businessId}] ${company} ${name}様からのお問い合わせ`);
-    const body = encodeURIComponent(
-      `会社名: ${company}\nお名前: ${name}\nメール: ${userEmail}\n\n${message}`
-    );
-    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+    // Try API first, fall back to mailto
+    try {
+      const res = await fetch("/api/inquiry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          business_id: businessId,
+          company_name: company,
+          contact_name: name,
+          contact_email: userEmail,
+          message,
+          source_lp_url: sourceLpUrl || window.location.href,
+          run_id: runId || "",
+        }),
+      });
+      if (!res.ok) throw new Error("API error");
+    } catch {
+      // Fallback: open mailto
+      const subject = encodeURIComponent(`[${businessId}] ${company} ${name}様からのお問い合わせ`);
+      const body = encodeURIComponent(
+        `会社名: ${company}\nお名前: ${name}\nメール: ${userEmail}\n\n${message}`
+      );
+      window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+    }
+
     setSubmitted(true);
+    setSending(false);
 
     // GA4 event
     if (typeof window !== "undefined" && (window as any).gtag) {
@@ -41,7 +66,7 @@ export default function LPContactForm({ ctaText, email, businessId }: Props) {
     return (
       <section className="bg-blue-600 py-16 text-center text-white">
         <p className="text-xl font-semibold">お問い合わせありがとうございます。</p>
-        <p className="mt-2 text-blue-100">メーラーが開きます。そのまま送信してください。</p>
+        <p className="mt-2 text-blue-100">担当者より折り返しご連絡いたします。</p>
       </section>
     );
   }
@@ -82,9 +107,10 @@ export default function LPContactForm({ ctaText, email, businessId }: Props) {
           />
           <button
             type="submit"
-            className="w-full rounded-lg bg-white px-6 py-4 text-lg font-semibold text-blue-700 shadow-lg hover:bg-blue-50 transition"
+            disabled={sending}
+            className="w-full rounded-lg bg-white px-6 py-4 text-lg font-semibold text-blue-700 shadow-lg hover:bg-blue-50 transition disabled:opacity-50"
           >
-            {ctaText}
+            {sending ? "送信中..." : ctaText}
           </button>
         </form>
       </div>

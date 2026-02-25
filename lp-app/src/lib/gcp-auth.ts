@@ -129,4 +129,12 @@ export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = 
     jobId: "slack-reporter",
     schedulers: ["schedule-slack-report"],
   },
+  "7_learning_engine": {
+    jobId: "learning-engine",
+    schedulers: ["schedule-learning-engine"],
+  },
+  "9_expansion_engine": {
+    jobId: "expansion-engine",
+    schedulers: ["schedule-expansion-engine"],
+  },
 };

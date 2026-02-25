@@ -49,6 +49,10 @@ const SETTING_META: Record<string, SettingMeta> = {
   kill_criteria_days: { label: "判定期間", description: "この日数経過後に損切り評価を実施", type: "number", suffix: "日" },
   kill_criteria_min_cv: { label: "最低CV数", description: "この数未満のCV数で損切り候補に", type: "number", suffix: "件" },
   kill_criteria_min_score: { label: "最低スコア", description: "この値未満のスコアで損切り候補に", type: "number", suffix: "点" },
+  // Expansion
+  expansion_min_inquiries: { label: "拡張判定 最低問い合わせ", description: "勝ちパターン検出に必要な最低問い合わせ数", type: "number", suffix: "件" },
+  expansion_min_deal_rate: { label: "拡張判定 最低成約率", description: "勝ちパターン検出に必要な最低成約率（0.0-1.0）", type: "number" },
+  expansion_min_days: { label: "拡張判定 最低運用日数", description: "勝ちパターン検出に必要な最低運用日数", type: "number", suffix: "日" },
   // Budget
   monthly_ad_budget: { label: "月間広告予算", description: "Google Ads の月間予算上限", type: "number", suffix: "円" },
   ads_daily_budget: { label: "日次広告予算", description: "キャンペーンあたりの日次予算", type: "number", suffix: "円" },

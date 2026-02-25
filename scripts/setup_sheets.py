@@ -295,6 +295,78 @@ SHEETS = {
         "willingness_to_pay",
         "next_action",
     ],
+    # ---------------------------------------------------------------
+    # 下流指標 — 問い合わせ・案件・KPI
+    # ---------------------------------------------------------------
+    "inquiry_log": [
+        "inquiry_id",
+        "run_id",
+        "business_id",
+        "timestamp",
+        "company_name",
+        "contact_name",
+        "contact_email",
+        "message",
+        "source_lp_url",
+        "status",           # new / contacted / qualified / disqualified
+        "qualified_at",
+    ],
+    "deal_pipeline": [
+        "deal_id",
+        "inquiry_id",
+        "business_id",
+        "run_id",
+        "stage",            # inquiry / qualification / proposal / negotiation / won / lost
+        "company_name",
+        "deal_value",
+        "created_at",
+        "updated_at",
+        "closed_at",
+        "won_lost",
+        "close_reason",
+    ],
+    "downstream_kpi": [
+        "business_id",
+        "date",
+        "run_id",
+        "total_inquiries",
+        "qualified_inquiries",
+        "proposals_sent",
+        "deals_won",
+        "deals_lost",
+        "total_deal_value",
+        "test_conversion_rate",
+        "target_customer_rate",
+        "deal_rate",
+    ],
+    # ---------------------------------------------------------------
+    # 拡張層 — 勝ちパターン検出・拡張アクション
+    # ---------------------------------------------------------------
+    "winning_patterns": [
+        "pattern_id",
+        "run_id",
+        "business_id",
+        "micro_market",
+        "offer_name",
+        "payer",
+        "lp_url",
+        "detection_date",
+        "pattern_type",         # quick_win / steady_growth / high_potential
+        "metrics_json",
+        "sop_json",
+        "budget_recommendation_json",
+        "status",               # detected / validated / scaling / saturated / archived
+        "scaling_stage",        # initial / testing / scaling / mature
+    ],
+    "expansion_log": [
+        "log_id",
+        "pattern_id",
+        "business_id",
+        "action_type",
+        "action_detail",
+        "executed_at",
+        "result",
+    ],
 }
 
 # Default settings to seed
@@ -324,6 +396,10 @@ DEFAULT_SETTINGS = [
     ["sender_company", "MarketProbe Project", "フォーム営業で使用する会社名"],
     # orchestrator_auto_approve / auto_approve_n / min_score_threshold — v2で廃止（ゲート制に移行）
     ["pipeline_improvement_log", "", "自己反省の改善提案・リスク・次回アクション蓄積（最新5件）"],
+    # 拡張層設定
+    ["expansion_min_inquiries", "5", "拡張判定に必要な最低問い合わせ数"],
+    ["expansion_min_deal_rate", "0.1", "拡張判定に必要な最低成約率"],
+    ["expansion_min_days", "14", "拡張判定に必要な最低運用日数"],
 ]
 
 

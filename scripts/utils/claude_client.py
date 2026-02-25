@@ -283,14 +283,17 @@ def _parse_json_response(raw: str) -> dict | list:
     """Strip markdown fences and parse JSON."""
     cleaned = raw.strip()
     if not cleaned:
-        logger.warning("Empty AI response — returning empty list")
-        return []
+        raise ValueError("Empty AI response for JSON generation")
     if cleaned.startswith("```"):
         first_newline = cleaned.index("\n")
         last_fence = cleaned.rfind("```")
-        cleaned = cleaned[first_newline + 1 : last_fence].strip()
+        if last_fence > first_newline:
+            cleaned = cleaned[first_newline + 1 : last_fence].strip()
     try:
-        return json.loads(cleaned)
+        result = json.loads(cleaned)
+        if result is None:
+            raise ValueError("Parsed JSON is null")
+        return result
     except json.JSONDecodeError as e:
-        logger.error(f"JSON parse failed: {e} — raw response: {cleaned[:200]}")
-        return []
+        logger.error(f"JSON parse failed: {e} — raw response: {cleaned[:300]}")
+        raise ValueError(f"JSON parse failed: {e}") from e

@@ -27,6 +27,8 @@ SCRIPT_LABELS: dict[str, str] = {
     "3_form_sales": "📧 フォーム営業",
     "4_analytics_reporter": "📊 分析・改善",
     "5_slack_reporter": "📋 Slackレポート",
+    "7_learning_engine": "🧠 学習エンジン",
+    "9_expansion_engine": "🚀 拡張エンジン",
 }
 
 # Status → emoji + label

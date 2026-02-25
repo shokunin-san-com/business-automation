@@ -542,6 +542,160 @@ def expire_old_insights(max_age_days: int = 30) -> int:
     return expired_count
 
 
+# ---------------------------------------------------------------------------
+# V2 pipeline learning — gate/offer/exploration analysis
+# ---------------------------------------------------------------------------
+
+def aggregate_v2_pipeline_metrics(lookback_runs: int = 5) -> dict:
+    """Aggregate V2 pipeline metrics across recent runs.
+
+    Returns:
+        Dict with gate pass rates, offer counts, exploration lane stats.
+    """
+    try:
+        gates = get_all_rows("gate_decision_log")
+        offers = get_all_rows("offer_3_log")
+        explorations = get_all_rows("exploration_lane_log")
+        lp_ready = get_all_rows("lp_ready_log")
+    except Exception as e:
+        logger.warning(f"Failed to read V2 data: {e}")
+        return {}
+
+    # Get unique run_ids (latest N)
+    all_run_ids = sorted(set(r.get("run_id", "") for r in gates if r.get("run_id")), reverse=True)
+    recent_runs = all_run_ids[:lookback_runs]
+
+    if not recent_runs:
+        return {"runs_analyzed": 0}
+
+    recent_gates = [r for r in gates if r.get("run_id") in recent_runs]
+    recent_offers = [r for r in offers if r.get("run_id") in recent_runs]
+    recent_explorations = [r for r in explorations if r.get("run_id") in recent_runs]
+    recent_lp = [r for r in lp_ready if r.get("run_id") in recent_runs]
+
+    total_gates = len(recent_gates)
+    passed_gates = len([r for r in recent_gates if r.get("status") == "PASS"])
+    failed_gates = total_gates - passed_gates
+
+    total_offers = len(recent_offers)
+    active_explorations = len([r for r in recent_explorations if r.get("status") == "ACTIVE"])
+    lp_ready_count = len([r for r in recent_lp if r.get("status") == "READY"])
+    lp_blocked_count = len([r for r in recent_lp if r.get("status") == "BLOCKED"])
+
+    return {
+        "runs_analyzed": len(recent_runs),
+        "total_gates": total_gates,
+        "passed_gates": passed_gates,
+        "failed_gates": failed_gates,
+        "gate_pass_rate": round(passed_gates / max(total_gates, 1), 3),
+        "total_offers": total_offers,
+        "avg_offers_per_run": round(total_offers / max(len(recent_runs), 1), 1),
+        "active_explorations": active_explorations,
+        "lp_ready": lp_ready_count,
+        "lp_blocked": lp_blocked_count,
+        "recent_run_ids": recent_runs,
+    }
+
+
+def detect_v2_trends(lookback_runs: int = 5) -> dict:
+    """Compare V2 pipeline metrics between older and newer runs.
+
+    Returns:
+        Dict with trend direction for gate pass rate, offer quality etc.
+    """
+    metrics = aggregate_v2_pipeline_metrics(lookback_runs * 2)
+    if metrics.get("runs_analyzed", 0) < 2:
+        return {"sufficient_data": False}
+
+    # Split runs into older half and newer half
+    gates = get_all_rows("gate_decision_log")
+    all_runs = sorted(set(r.get("run_id", "") for r in gates if r.get("run_id")), reverse=True)
+    mid = len(all_runs) // 2
+    newer_runs = set(all_runs[:mid])
+    older_runs = set(all_runs[mid:mid + lookback_runs])
+
+    def _pass_rate(run_set: set) -> float:
+        run_gates = [r for r in gates if r.get("run_id") in run_set]
+        if not run_gates:
+            return 0
+        return len([r for r in run_gates if r.get("status") == "PASS"]) / len(run_gates)
+
+    newer_rate = _pass_rate(newer_runs)
+    older_rate = _pass_rate(older_runs)
+
+    def _trend(newer: float, older: float) -> str:
+        if older == 0:
+            return "up" if newer > 0 else "flat"
+        change = (newer - older) / older
+        if change > 0.15:
+            return "up"
+        elif change < -0.15:
+            return "down"
+        return "flat"
+
+    return {
+        "sufficient_data": True,
+        "gate_pass_rate_trend": _trend(newer_rate, older_rate),
+        "newer_gate_pass_rate": round(newer_rate, 3),
+        "older_gate_pass_rate": round(older_rate, 3),
+    }
+
+
+def generate_v2_insights(v2_metrics: dict, v2_trends: dict) -> list[dict]:
+    """Use AI to generate V2-specific learning insights.
+
+    Returns:
+        List of insight dicts saved to learning_memory.
+    """
+    if not v2_metrics or v2_metrics.get("runs_analyzed", 0) == 0:
+        logger.info("No V2 metrics — skipping V2 insight generation")
+        return []
+
+    prompt = f"""以下のV2パイプライン実行データを分析し、改善インサイトを生成してください。
+
+## V2パイプラインメトリクス（直近{v2_metrics.get('runs_analyzed', 0)}ラン）
+- ゲート通過率: {v2_metrics.get('gate_pass_rate', 0):.1%} ({v2_metrics.get('passed_gates', 0)}/{v2_metrics.get('total_gates', 0)})
+- オファー生成数: {v2_metrics.get('total_offers', 0)} (平均 {v2_metrics.get('avg_offers_per_run', 0)}/ラン)
+- 探索レーン（アクティブ）: {v2_metrics.get('active_explorations', 0)}
+- LP作成可: {v2_metrics.get('lp_ready', 0)} / LP作成不可: {v2_metrics.get('lp_blocked', 0)}
+
+## トレンド
+- ゲート通過率トレンド: {v2_trends.get('gate_pass_rate_trend', '不明')}
+- 最新通過率: {v2_trends.get('newer_gate_pass_rate', 0):.1%}
+- 過去通過率: {v2_trends.get('older_gate_pass_rate', 0):.1%}
+
+以下のJSON配列で回答してください:
+[
+  {{
+    "content": "インサイト内容",
+    "category": "v2_gate_optimization" | "v2_offer_quality" | "v2_pipeline_efficiency" | "v2_exploration_strategy",
+    "priority": "high" | "medium" | "low",
+    "confidence": 0.0-1.0,
+    "type": "insight"
+  }}
+]
+
+3-5件のインサイトを生成してください。"""
+
+    try:
+        insights = generate_json(
+            prompt=prompt,
+            system="あなたはAIパイプライン最適化の専門家です。V2パイプラインのゲート制・証拠主義モデルの改善提案を行ってください。",
+            max_tokens=2048,
+            temperature=0.5,
+        )
+    except Exception as e:
+        logger.error(f"V2 insight generation failed: {e}")
+        return []
+
+    if isinstance(insights, dict):
+        insights = insights.get("insights", [insights])
+    if not isinstance(insights, list):
+        insights = [insights]
+
+    return _save_insights(insights)
+
+
 def get_performance_summary(business_id: str | None = None, days: int = 7) -> str:
     """Get a formatted performance summary for chat context.
 

@@ -17,8 +17,13 @@ from utils.learning_engine import (
     detect_trends,
     generate_insights,
     expire_old_insights,
+    aggregate_v2_pipeline_metrics,
+    detect_v2_trends,
+    generate_v2_insights,
 )
-from utils.sheets_client import get_rows_by_status
+from utils.downstream_metrics import aggregate_daily_downstream, get_latest_downstream_kpis
+from utils.claude_client import generate_json
+from utils.sheets_client import get_rows_by_status, get_all_rows
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 
@@ -67,7 +72,69 @@ def main():
                 apply_kill_flag(kr["business_id"])
                 kill_flagged += 1
 
-        # 6. Notify kills
+        # 6. V2 pipeline learning
+        v2_insights = []
+        try:
+            update_status("7_learning_engine", "running", "V2パイプライン学習中...")
+            v2_metrics = aggregate_v2_pipeline_metrics()
+            v2_trends = detect_v2_trends()
+            if v2_metrics.get("runs_analyzed", 0) > 0:
+                v2_insights = generate_v2_insights(v2_metrics, v2_trends)
+                logger.info(f"Generated {len(v2_insights)} V2 insights")
+        except Exception as v2e:
+            logger.warning(f"V2 learning failed (non-fatal): {v2e}")
+
+        # 7. Downstream KPI integration
+        downstream_kpi = {}
+        try:
+            update_status("7_learning_engine", "running", "下流KPI統合中...")
+            downstream_kpi = aggregate_daily_downstream()
+            logger.info(f"Downstream KPI: inquiries={downstream_kpi.get('total_inquiries', 0)}, "
+                        f"deal_rate={downstream_kpi.get('deal_rate', 0)}")
+        except Exception as de:
+            logger.warning(f"Downstream KPI aggregation failed (non-fatal): {de}")
+
+        # 8. Expansion data learning
+        expansion_insights = 0
+        try:
+            update_status("7_learning_engine", "running", "拡張データ学習中...")
+            winning_patterns = get_all_rows("winning_patterns")
+            active_patterns = [p for p in winning_patterns if p.get("status") not in ("archived", "saturated")]
+            if active_patterns:
+                # Learn from winning pattern characteristics
+                pattern_summary = "\n".join([
+                    f"- {p.get('micro_market', '?')}: {p.get('pattern_type', '?')}, status={p.get('status', '?')}"
+                    for p in active_patterns[:10]
+                ])
+                expansion_prompt = f"""以下の勝ちパターンデータから、V2パイプラインの探索・オファー生成に活かせるインサイトを生成してください。
+
+## 勝ちパターン ({len(active_patterns)}件)
+{pattern_summary}
+
+JSON配列で回答:
+[{{"content": "インサイト", "category": "expansion_strategy", "priority": "high"|"medium"|"low", "confidence": 0.0-1.0, "type": "pattern"}}]
+
+2-3件で簡潔に。"""
+                try:
+                    exp_insights = generate_json(
+                        prompt=expansion_prompt,
+                        system="あなたは事業拡張戦略の専門家です。勝ちパターンから次の探索に活かせる教訓を抽出してください。",
+                        max_tokens=1024,
+                        temperature=0.5,
+                    )
+                    if isinstance(exp_insights, dict):
+                        exp_insights = exp_insights.get("insights", [exp_insights])
+                    if isinstance(exp_insights, list):
+                        from utils.learning_engine import _save_insights
+                        saved = _save_insights(exp_insights)
+                        expansion_insights = len(saved)
+                        logger.info(f"Generated {expansion_insights} expansion strategy insights")
+                except Exception as ei:
+                    logger.warning(f"Expansion insight generation failed: {ei}")
+        except Exception as ee:
+            logger.warning(f"Expansion data learning failed (non-fatal): {ee}")
+
+        # 9. Notify kills
         if kill_results:
             kill_msg_parts = [":skull: *損切り判定レポート*\n"]
             for kr in kill_results:
@@ -80,8 +147,8 @@ def main():
                 )
             slack_notify("\n".join(kill_msg_parts))
 
-        # 7. Notify insights
-        total_insights = len(insights)
+        # 10. Notify insights
+        total_insights = len(insights) + len(v2_insights) + expansion_insights
         if total_insights > 0:
             high_priority = [i for i in insights if i.get("priority") == "high"]
             msg = (
@@ -103,8 +170,11 @@ def main():
             "performance_records": len(performance),
             "trends_analyzed": len(trends),
             "insights_generated": total_insights,
+            "v2_insights": len(v2_insights),
             "expired": expired_count,
             "kill_flagged": kill_flagged,
+            "downstream_inquiries": downstream_kpi.get("total_inquiries", 0),
+            "downstream_deal_rate": downstream_kpi.get("deal_rate", 0),
         })
         logger.info(f"=== Learning engine complete: {total_insights} insights ===")
 

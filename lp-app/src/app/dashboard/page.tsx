@@ -39,6 +39,26 @@ interface V2Data {
   lpReadyStatus: string;
 }
 
+interface DownstreamData {
+  totalInquiries: number;
+  newInquiries: number;
+  qualifiedInquiries: number;
+  totalDeals: number;
+  activeDeals: number;
+  wonDeals: number;
+  lostDeals: number;
+  totalDealValue: number;
+  dealRate: number;
+  funnel: { stage: string; count: number }[];
+}
+
+interface ExpansionData {
+  totalPatterns: number;
+  activePatterns: number;
+  scalingPatterns: number;
+  patterns: Record<string, string>[];
+}
+
 interface DashboardData {
   pipeline: ScriptInfo[];
   lpCount: number;
@@ -47,6 +67,8 @@ interface DashboardData {
   pendingIdeas?: PendingIdea[];
   schedulerStatus?: Record<string, SchedulerInfo>;
   v2?: V2Data;
+  downstream?: DownstreamData;
+  expansion?: ExpansionData;
 }
 
 interface KnowledgeDoc {
@@ -89,6 +111,8 @@ const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers
   "3_form_sales": { icon: "\u2709\uFE0F", schedule: "平日 11:00", schedulers: ["schedule-form-sales"] },
   "4_analytics_reporter": { icon: "\u{1F4C8}", schedule: "毎日 01:00", schedulers: ["schedule-analytics"] },
   "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "毎週月曜 08:00", schedulers: ["schedule-slack-report"] },
+  "7_learning_engine": { icon: "\u{1F9E0}", schedule: "毎日 02:00", schedulers: ["schedule-learning-engine"] },
+  "9_expansion_engine": { icon: "\u{1F680}", schedule: "毎日 03:00", schedulers: ["schedule-expansion-engine"] },
 };
 
 /** Human-readable suffix for individual Cloud Scheduler job names */
@@ -646,16 +670,10 @@ export default function DashboardPage() {
 
           {/* ---- KPI Cards ---- */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <KPICard label="LP数" value={data.lpCount} trend={null} color="blue" />
+            <KPICard label="問い合わせ" value={data.downstream?.totalInquiries ?? 0} trend={null} color="blue" />
             <KPICard
-              label="SNS投稿数"
-              value={data.pipeline.find((s) => s.id === "2_sns_poster")?.metrics?.posted ?? "\u2014"}
-              trend={null}
-              color="violet"
-            />
-            <KPICard
-              label="フォーム営業"
-              value={data.pipeline.find((s) => s.id === "3_form_sales")?.metrics?.sent ?? "\u2014"}
+              label="成約率"
+              value={data.downstream?.dealRate ? `${(data.downstream.dealRate * 100).toFixed(0)}%` : "0%"}
               trend={null}
               color="emerald"
             />
@@ -670,6 +688,12 @@ export default function DashboardPage() {
               value={data.pipeline.find((s) => s.id === "orchestrate_v2")?.metrics?.offers_generated ?? "\u2014"}
               trend={null}
               color="pink"
+            />
+            <KPICard
+              label="勝ちパターン"
+              value={data.expansion?.activePatterns ?? 0}
+              trend={null}
+              color="violet"
             />
           </div>
 
@@ -782,6 +806,74 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
+            </section>
+          )}
+
+          {/* ---- Downstream Funnel ---- */}
+          {activeTab === "pipeline" && data.downstream && data.downstream.totalInquiries > 0 && (
+            <section className="rounded-2xl border border-white/[.08] bg-white/[.03] p-5">
+              <h3 className="mb-3 text-sm font-bold text-white/90">ファネル</h3>
+              <div className="flex items-end gap-2">
+                {[
+                  { label: "問い合わせ", value: data.downstream.totalInquiries, color: "bg-blue-500" },
+                  { label: "適格", value: data.downstream.qualifiedInquiries, color: "bg-cyan-500" },
+                  { label: "商談中", value: data.downstream.activeDeals, color: "bg-amber-500" },
+                  { label: "成約", value: data.downstream.wonDeals, color: "bg-emerald-500" },
+                  { label: "失注", value: data.downstream.lostDeals, color: "bg-red-500" },
+                ].map((step) => {
+                  const maxVal = Math.max(data.downstream!.totalInquiries, 1);
+                  const height = Math.max((step.value / maxVal) * 120, 8);
+                  return (
+                    <div key={step.label} className="flex flex-1 flex-col items-center gap-1">
+                      <span className="text-xs font-semibold text-white/80">{step.value}</span>
+                      <div
+                        className={`w-full rounded-t-lg ${step.color} transition-all`}
+                        style={{ height: `${height}px` }}
+                      />
+                      <span className="text-[10px] text-white/40">{step.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {data.downstream.totalDealValue > 0 && (
+                <p className="mt-3 text-center text-xs text-white/50">
+                  成約金額合計: <span className="font-semibold text-emerald-400">{data.downstream.totalDealValue.toLocaleString()}円</span>
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* ---- Expansion Patterns ---- */}
+          {activeTab === "pipeline" && data.expansion && data.expansion.totalPatterns > 0 && (
+            <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-r from-violet-500/[.04] to-purple-500/[.04] p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-violet-300">拡張層 — 勝ちパターン</h3>
+                <span className="text-[10px] text-white/30">{data.expansion.activePatterns}件アクティブ / {data.expansion.scalingPatterns}件スケーリング中</span>
+              </div>
+              <div className="space-y-2">
+                {data.expansion.patterns.map((p, i) => (
+                  <div key={i} className="flex items-center gap-3 rounded-xl bg-black/30 p-3">
+                    <span className={`h-2 w-2 rounded-full ${
+                      p.status === "scaling" ? "bg-emerald-400 animate-pulse" :
+                      p.status === "validated" ? "bg-blue-400" :
+                      p.status === "detected" ? "bg-amber-400" :
+                      "bg-white/20"
+                    }`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-white/80">{p.micro_market}</p>
+                      <p className="text-[10px] text-white/40">{p.offer_name} — {p.payer}</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      p.pattern_type === "quick_win" ? "bg-emerald-500/15 text-emerald-400" :
+                      p.pattern_type === "steady_growth" ? "bg-blue-500/15 text-blue-400" :
+                      "bg-violet-500/15 text-violet-400"
+                    }`}>
+                      {p.pattern_type === "quick_win" ? "即効型" :
+                       p.pattern_type === "steady_growth" ? "安定成長" : "高ポテンシャル"}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
@@ -929,6 +1021,12 @@ export default function DashboardPage() {
                               lps_analyzed: "分析LP",
                               bid_adjustments: "入札調整",
                               kill_flagged: "損切り対象",
+                              downstream_inquiries: "問い合わせ",
+                              downstream_deals_won: "成約",
+                              downstream_deal_rate: "成約率",
+                              patterns_detected: "パターン検出",
+                              sops_generated: "SOP生成",
+                              v2_insights: "V2インサイト",
                             } as Record<string, string>)[k] || k.replace(/_/g, " ")}: <span className="text-white/70 font-medium">{v}</span>
                           </span>
                         ))}

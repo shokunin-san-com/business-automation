@@ -73,6 +73,15 @@ def generate_lp_content(idea: dict, knowledge_context: str = "", learning_contex
         temperature=0.7,
     )
 
+    # Ensure we got a dict back (not a list or empty)
+    if isinstance(lp_data, list):
+        if len(lp_data) > 0 and isinstance(lp_data[0], dict):
+            lp_data = lp_data[0]
+        else:
+            raise ValueError(f"AI returned a list instead of dict for LP content: {str(lp_data)[:200]}")
+    if not isinstance(lp_data, dict):
+        raise ValueError(f"AI returned unexpected type {type(lp_data).__name__} for LP content")
+
     # Add metadata
     lp_data["id"] = idea["id"]
     lp_data["name"] = idea["name"]
@@ -144,12 +153,16 @@ def main():
                 logger.info(f"LP already generated for {bid}, skipping")
                 continue
 
-            update_status("1_lp_generator", "running", f"LP生成中: {idea['name']}")
-            logger.info(f"Generating LP for: {idea['name']} ({bid})")
-            lp_data = generate_lp_content(idea, knowledge_context=knowledge_context, learning_context=learning_context)
-            save_lp_content(bid, lp_data)
-            record_to_sheets(bid, lp_data)
-            generated_count += 1
+            try:
+                update_status("1_lp_generator", "running", f"LP生成中: {idea['name']}")
+                logger.info(f"Generating LP for: {idea['name']} ({bid})")
+                lp_data = generate_lp_content(idea, knowledge_context=knowledge_context, learning_context=learning_context)
+                save_lp_content(bid, lp_data)
+                record_to_sheets(bid, lp_data)
+                generated_count += 1
+            except Exception as e:
+                logger.error(f"Failed to generate LP for {bid}: {e}", exc_info=True)
+                continue
 
         if generated_count > 0:
             slack_notify(f":rocket: LP を *{generated_count}件* 自動生成しました。数分以内に自動公開されます。")

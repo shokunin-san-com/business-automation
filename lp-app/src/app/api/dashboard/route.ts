@@ -74,6 +74,8 @@ export async function GET() {
       "3_form_sales": "フォーム営業",
       "4_analytics_reporter": "分析・改善",
       "5_slack_reporter": "Slackレポート",
+      "7_learning_engine": "学習エンジン",
+      "9_expansion_engine": "拡張エンジン",
     };
 
     // Build a lookup from pipeline_status rows
@@ -246,6 +248,71 @@ export async function GET() {
       /* V2 data fetch is best-effort */
     }
 
+    // --- Downstream metrics: inquiry + deal pipeline ---
+    let downstream = {
+      totalInquiries: 0,
+      newInquiries: 0,
+      qualifiedInquiries: 0,
+      totalDeals: 0,
+      activeDeals: 0,
+      wonDeals: 0,
+      lostDeals: 0,
+      totalDealValue: 0,
+      dealRate: 0,
+      funnel: [] as { stage: string; count: number }[],
+    };
+
+    try {
+      const inquiries = await cachedGetAllRows("inquiry_log");
+      const deals = await cachedGetAllRows("deal_pipeline");
+
+      downstream.totalInquiries = inquiries.length;
+      downstream.newInquiries = inquiries.filter((r) => r.status === "new").length;
+      downstream.qualifiedInquiries = inquiries.filter((r) => r.status === "qualified").length;
+      downstream.totalDeals = deals.length;
+      downstream.wonDeals = deals.filter((r) => r.stage === "won").length;
+      downstream.lostDeals = deals.filter((r) => r.stage === "lost").length;
+      downstream.activeDeals = deals.filter((r) => !["won", "lost"].includes(r.stage)).length;
+      downstream.totalDealValue = deals
+        .filter((r) => r.stage === "won")
+        .reduce((sum, r) => sum + (parseFloat(r.deal_value) || 0), 0);
+      downstream.dealRate =
+        downstream.totalInquiries > 0
+          ? Math.round((downstream.wonDeals / downstream.totalInquiries) * 100) / 100
+          : 0;
+
+      // Funnel counts
+      const stages = ["inquiry", "qualification", "proposal", "negotiation", "won", "lost"];
+      downstream.funnel = stages.map((stage) => ({
+        stage,
+        count: deals.filter((r) => r.stage === stage).length,
+      }));
+    } catch {
+      /* downstream data is best-effort */
+    }
+
+    // --- Expansion: winning patterns ---
+    let expansion = {
+      totalPatterns: 0,
+      activePatterns: 0,
+      scalingPatterns: 0,
+      patterns: [] as Record<string, string>[],
+    };
+
+    try {
+      const patterns = await cachedGetAllRows("winning_patterns");
+      expansion.totalPatterns = patterns.length;
+      expansion.activePatterns = patterns.filter(
+        (r) => ["detected", "validated", "scaling"].includes(r.status),
+      ).length;
+      expansion.scalingPatterns = patterns.filter((r) => r.status === "scaling").length;
+      expansion.patterns = patterns
+        .filter((r) => r.status !== "archived")
+        .slice(-10);
+    } catch {
+      /* expansion data is best-effort */
+    }
+
     return NextResponse.json({
       pipeline,
       lpCount,
@@ -262,6 +329,8 @@ export async function GET() {
         ceoReviewNeeded,
         lpReadyStatus,
       },
+      downstream,
+      expansion,
     });
   } catch (err) {
     console.error("Dashboard API error:", err);
@@ -272,7 +341,6 @@ export async function GET() {
       logs: [],
       lastUpdated: "",
       pendingIdeas: [],
-      pendingMarkets: [],
       schedulerStatus: {},
       v2: {
         latestRunId: "",
@@ -281,6 +349,24 @@ export async function GET() {
         scoringWarnings: [],
         ceoReviewNeeded: { market: false, offer: false },
         lpReadyStatus: "",
+      },
+      downstream: {
+        totalInquiries: 0,
+        newInquiries: 0,
+        qualifiedInquiries: 0,
+        totalDeals: 0,
+        activeDeals: 0,
+        wonDeals: 0,
+        lostDeals: 0,
+        totalDealValue: 0,
+        dealRate: 0,
+        funnel: [],
+      },
+      expansion: {
+        totalPatterns: 0,
+        activePatterns: 0,
+        scalingPatterns: 0,
+        patterns: [],
       },
     });
   }

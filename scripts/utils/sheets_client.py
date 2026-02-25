@@ -240,6 +240,21 @@ def find_row_index(sheet_name: str, column_name: str, value: str) -> int | None:
     return None
 
 
+def get_setting(key: str, default: str = "") -> str:
+    """Read a single setting value from the 'settings' sheet.
+
+    Returns default if key not found or sheet unavailable.
+    """
+    try:
+        rows = get_all_rows("settings")
+        for r in rows:
+            if r.get("key") == key:
+                return r.get("value", default) or default
+    except Exception:
+        pass
+    return default
+
+
 def get_sheet_url(sheet_name: str) -> str:
     """Return the direct URL for a specific sheet tab.
 
