@@ -39,17 +39,23 @@ def main():
         performance = aggregate_daily_performance()
         logger.info(f"Aggregated performance for {len(performance)} businesses")
 
-        # 2. Detect trends for active ideas
+        # 2. Detect trends for active offers (V2: offer_3_log replaces business_ideas)
         update_status("7_learning_engine", "running", "トレンド分析中...")
-        active_ideas = get_rows_by_status("business_ideas", "active")
         trends = []
-        for idea in active_ideas:
-            bid = idea.get("id", "")
-            if bid:
-                trend = detect_trends(bid, lookback=14)
-                if trend.get("days_analyzed", 0) >= 2:
-                    trends.append(trend)
-        logger.info(f"Detected trends for {len(trends)} businesses")
+        try:
+            active_offers = get_all_rows("offer_3_log")
+            # Use unique run_ids as "business" identifiers for trend tracking
+            seen_runs = set()
+            for offer in active_offers:
+                rid = offer.get("run_id", "")
+                if rid and rid not in seen_runs:
+                    seen_runs.add(rid)
+                    trend = detect_trends(rid, lookback=14)
+                    if trend.get("days_analyzed", 0) >= 2:
+                        trends.append(trend)
+        except Exception as te:
+            logger.warning(f"Trend detection skipped (non-fatal): {te}")
+        logger.info(f"Detected trends for {len(trends)} offers")
 
         # 3. Generate AI insights
         update_status("7_learning_engine", "running", "AIインサイト生成中...")
@@ -61,16 +67,10 @@ def main():
         # 4. Expire old insights
         expired_count = expire_old_insights(max_age_days=30)
 
-        # 5. Kill criteria evaluation
-        update_status("7_learning_engine", "running", "損切り判定中...")
-        from utils.kill_judge import evaluate_kill_criteria, apply_kill_flag
-
-        kill_results = evaluate_kill_criteria()
+        # 5. Kill criteria evaluation (V2: skipped — business_ideas廃止済み)
+        # V1のbusiness_ideasシートは削除済み。V2ではgate_decision_logのPASS/FAILで管理。
+        kill_results = []
         kill_flagged = 0
-        for kr in kill_results:
-            if kr["recommendation"] == "kill":
-                apply_kill_flag(kr["business_id"])
-                kill_flagged += 1
 
         # 6. V2 pipeline learning
         v2_insights = []

@@ -563,7 +563,7 @@ async function gatherDataContext(lower: string): Promise<string> {
       "settings", "micro_market_list", "gate_decision_log",
       "exploration_lane_log", "competitor_20_log", "offer_3_log",
       "lp_ready_log", "pipeline_status", "execution_logs",
-      "business_ideas", "market_research", "analytics", "sns_posts",
+      "analytics", "sns_posts", "learning_memory",
     ]).catch(() => ({}));
 
     if (Object.keys(sheetUrls).length > 0) {

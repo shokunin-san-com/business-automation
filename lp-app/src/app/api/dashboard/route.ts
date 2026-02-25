@@ -110,19 +110,26 @@ export async function GET() {
       lpCount = await cachedCountRows("lp_content");
     } catch { /* sheet may not exist yet */ }
 
-    // --- Pending ideas from business_ideas (status=draft) ---
+    // --- Pending offers from offer_3_log (V2: replaces business_ideas) ---
     let pendingIdeas: PendingIdea[] = [];
     try {
-      const ideas = await cachedGetAllRows("business_ideas");
-      pendingIdeas = ideas
-        .filter((row) => row.status === "draft")
+      const offers = await cachedGetAllRows("offer_3_log");
+      // Show latest offers as "pending ideas" for dashboard display
+      const uniqueRuns = new Map<string, typeof offers[0]>();
+      for (const row of offers) {
+        if (row.run_id && !uniqueRuns.has(row.run_id)) {
+          uniqueRuns.set(row.run_id, row);
+        }
+      }
+      pendingIdeas = Array.from(uniqueRuns.values())
+        .slice(-5)
         .map((row) => ({
-          id: row.id || "",
-          name: row.name || "",
-          category: row.category || "",
-          description: row.description || "",
-          target_audience: row.target_audience || "",
-          created_at: row.created_at || "",
+          id: row.run_id || "",
+          name: row.offer_name || "",
+          category: row.payer || "",
+          description: row.deliverable || "",
+          target_audience: row.payer || "",
+          created_at: "",
         }));
     } catch { /* sheet may not exist yet */ }
 
