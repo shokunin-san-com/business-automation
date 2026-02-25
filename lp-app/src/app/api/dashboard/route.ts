@@ -68,15 +68,12 @@ export async function GET() {
     } catch { /* sheet may not exist yet */ }
 
     const scriptLabels: Record<string, string> = {
-      orchestrate_v2: "V2\u30D1\u30A4\u30D7\u30E9\u30A4\u30F3",
-      A_market_research: "\u5E02\u5834\u8ABF\u67FB",
-      C_competitor_analysis: "\u7AF6\u5408\u8ABF\u67FB",
-      "0_idea_generator": "\u4E8B\u696D\u6848\u751F\u6210",
-      "1_lp_generator": "LP\u751F\u6210",
-      "2_sns_poster": "SNS\u6295\u7A3F",
-      "3_form_sales": "\u30D5\u30A9\u30FC\u30E0\u55B6\u696D",
-      "4_analytics_reporter": "\u5206\u6790\u30FB\u6539\u5584",
-      "5_slack_reporter": "Slack\u30EC\u30DD\u30FC\u30C8",
+      orchestrate_v2: "V2パイプライン",
+      "1_lp_generator": "LP生成",
+      "2_sns_poster": "SNS投稿",
+      "3_form_sales": "フォーム営業",
+      "4_analytics_reporter": "分析・改善",
+      "5_slack_reporter": "Slackレポート",
     };
 
     // Build a lookup from pipeline_status rows
@@ -125,31 +122,6 @@ export async function GET() {
           target_audience: row.target_audience || "",
           created_at: row.created_at || "",
         }));
-    } catch { /* sheet may not exist yet */ }
-
-    // --- Pending markets from market_selection (status=pending_review) ---
-    interface PendingMarket {
-      id: string;
-      market_name: string;
-      total_score: string;
-      recommended_entry_angle: string;
-      rationale: string;
-      created_at: string;
-    }
-    let pendingMarkets: PendingMarket[] = [];
-    try {
-      const marketRows = await cachedGetAllRows("market_selection");
-      pendingMarkets = marketRows
-        .filter((row) => row.status === "pending_review")
-        .map((row) => ({
-          id: row.id || "",
-          market_name: row.market_name || "",
-          total_score: row.total_score || "0",
-          recommended_entry_angle: row.recommended_entry_angle || "",
-          rationale: row.rationale || "",
-          created_at: row.created_at || "",
-        }))
-        .sort((a, b) => parseFloat(b.total_score) - parseFloat(a.total_score));
     } catch { /* sheet may not exist yet */ }
 
     // --- Scheduler status from Cloud Scheduler API ---
@@ -280,7 +252,6 @@ export async function GET() {
       logs,
       lastUpdated,
       pendingIdeas,
-      pendingMarkets,
       schedulerStatus,
       // V2 additions
       v2: {

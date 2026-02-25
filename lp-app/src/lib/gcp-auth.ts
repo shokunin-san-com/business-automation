@@ -105,21 +105,9 @@ export async function getWorkspaceEventsToken(): Promise<string> {
  * Job name to Cloud Run Job ID mapping.
  */
 export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = {
-  A_market_research: {
-    jobId: "market-research",
-    schedulers: ["schedule-market-research"],
-  },
-  B_market_selection: {
-    jobId: "market-selection",
-    schedulers: ["schedule-market-selection"],
-  },
-  C_competitor_analysis: {
-    jobId: "competitor-analysis",
-    schedulers: ["schedule-competitor-analysis"],
-  },
-  "0_idea_generator": {
-    jobId: "idea-generator",
-    schedulers: ["schedule-idea-generator"],
+  orchestrate_v2: {
+    jobId: "orchestrate-v2",
+    schedulers: [],
   },
   "1_lp_generator": {
     jobId: "lp-generator",
@@ -140,25 +128,5 @@ export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = 
   "5_slack_reporter": {
     jobId: "slack-reporter",
     schedulers: ["schedule-slack-report"],
-  },
-  "6_ads_monitor": {
-    jobId: "ads-monitor",
-    schedulers: ["schedule-ads-monitor"],
-  },
-  "7_learning_engine": {
-    jobId: "learning-engine",
-    schedulers: ["schedule-learning-engine"],
-  },
-  "8_ads_creator": {
-    jobId: "ads-creator",
-    schedulers: ["schedule-ads-creator"],
-  },
-  orchestrate_abc0: {
-    jobId: "agent-orchestrator",
-    schedulers: [],
-  },
-  orchestrate_v2: {
-    jobId: "orchestrate-v2",
-    schedulers: [],
   },
 };

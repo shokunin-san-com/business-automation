@@ -30,15 +30,6 @@ interface SchedulerInfo {
   nextRun: string;
 }
 
-interface PendingMarket {
-  id: string;
-  market_name: string;
-  total_score: string;
-  recommended_entry_angle: string;
-  rationale: string;
-  created_at: string;
-}
-
 interface V2Data {
   latestRunId: string;
   gateResults: Record<string, string>[];
@@ -54,7 +45,6 @@ interface DashboardData {
   logs: string[];
   lastUpdated: string;
   pendingIdeas?: PendingIdea[];
-  pendingMarkets?: PendingMarket[];
   schedulerStatus?: Record<string, SchedulerInfo>;
   v2?: V2Data;
 }
@@ -93,18 +83,12 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
 };
 
 const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers: string[] }> = {
-  A_market_research: { icon: "\u{1F50D}", schedule: "毎週日曜 20:00", schedulers: ["schedule-market-research"] },
-  B_market_selection: { icon: "\u{1F3AF}", schedule: "毎週日曜 22:00", schedulers: ["schedule-market-selection"] },
-  C_competitor_analysis: { icon: "\u2694\uFE0F", schedule: "毎週月曜 04:00", schedulers: ["schedule-competitor-analysis"] },
-  "0_idea_generator": { icon: "\u{1F4A1}", schedule: "毎日 06:00", schedulers: ["schedule-idea-generator"] },
+  orchestrate_v2: { icon: "\u{1F52C}", schedule: "", schedulers: [] },
   "1_lp_generator": { icon: "\u{1F680}", schedule: "毎日 09:00", schedulers: ["schedule-lp-generator"] },
   "2_sns_poster": { icon: "\u{1F4E2}", schedule: "毎日 10:00 / 18:00", schedulers: ["schedule-sns-morning", "schedule-sns-evening"] },
   "3_form_sales": { icon: "\u2709\uFE0F", schedule: "平日 11:00", schedulers: ["schedule-form-sales"] },
   "4_analytics_reporter": { icon: "\u{1F4C8}", schedule: "毎日 01:00", schedulers: ["schedule-analytics"] },
   "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "毎週月曜 08:00", schedulers: ["schedule-slack-report"] },
-  "6_ads_monitor": { icon: "\u{1F4B0}", schedule: "毎時（24時間稼働）", schedulers: ["schedule-ads-monitor"] },
-  "7_learning_engine": { icon: "\u{1F9E0}", schedule: "毎日 02:00", schedulers: ["schedule-learning-engine"] },
-  "8_ads_creator": { icon: "\u{1F4E3}", schedule: "毎週月曜 07:00", schedulers: ["schedule-ads-creator"] },
 };
 
 /** Human-readable suffix for individual Cloud Scheduler job names */
@@ -176,7 +160,6 @@ export default function DashboardPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [activeTab, setActiveTab] = useState<"pipeline" | "logs" | "knowledge" | "feedback">("pipeline");
   const [approving, setApproving] = useState<string | null>(null);
-  const [approvingMarket, setApprovingMarket] = useState<string | null>(null);
   const [executing, setExecuting] = useState<string | null>(null);
   const [togglingScheduler, setTogglingScheduler] = useState<string | null>(null);
   const [globalToggling, setGlobalToggling] = useState(false);
@@ -198,14 +181,6 @@ export default function DashboardPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Ads approval state
-  const [pendingAds, setPendingAds] = useState<{
-    id: string; businessId: string; campaignName: string; campaignId: string;
-    dailyBudget: number; keywords: string[]; headlines: string[]; descriptions: string[];
-    createdAt: string;
-  }[]>([]);
-  const [approvingAd, setApprovingAd] = useState<string | null>(null);
 
   // Feedback state
   const [feedbackMessages, setFeedbackMessages] = useState<ChatMessage[]>([]);
@@ -282,20 +257,6 @@ export default function DashboardPage() {
     }
   };
 
-  const handleMarketApprove = async (marketId: string, action: "approve" | "reject") => {
-    setApprovingMarket(marketId);
-    try {
-      await fetch("/api/market-selection/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ market_id: marketId, action }),
-      });
-      await fetchData();
-    } finally {
-      setApprovingMarket(null);
-    }
-  };
-
   const handleExecute = async (scriptId: string) => {
     setExecuting(scriptId);
     try {
@@ -344,37 +305,6 @@ export default function DashboardPage() {
       console.error("Global toggle error:", err);
     } finally {
       setGlobalToggling(false);
-    }
-  };
-
-  // Fetch pending ad campaigns
-  const fetchPendingAds = useCallback(async () => {
-    try {
-      const res = await fetch("/api/ads");
-      if (res.ok) {
-        const d = await res.json();
-        setPendingAds(d.campaigns || []);
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "pipeline") {
-      fetchPendingAds();
-    }
-  }, [activeTab, fetchPendingAds]);
-
-  const handleAdApproval = async (adId: string, action: "approve" | "reject") => {
-    setApprovingAd(adId);
-    try {
-      await fetch("/api/ads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: adId, action }),
-      });
-      await fetchPendingAds();
-    } finally {
-      setApprovingAd(null);
     }
   };
 
@@ -624,7 +554,6 @@ export default function DashboardPage() {
   const errorCount = data.pipeline.filter((s) => s.status === "error").length;
   const successCount = data.pipeline.filter((s) => s.status === "success").length;
   const pendingIdeas = data.pendingIdeas || [];
-  const pendingMarkets = data.pendingMarkets || [];
   const schedulerStatus = data.schedulerStatus || {};
 
   const allSchedulerNames = Object.values(PIPELINE_META).flatMap((m) => m.schedulers);
@@ -715,45 +644,6 @@ export default function DashboardPage() {
             </section>
           )}
 
-          {/* ---- Pending Market Selection Banner ---- */}
-          {pendingMarkets.length > 0 && (
-            <section className="rounded-2xl border border-blue-500/20 bg-gradient-to-r from-blue-500/[.06] to-cyan-500/[.04] p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/20 text-[10px]">{"\u{1F3AF}"}</span>
-                <h2 className="text-sm font-semibold text-blue-300">{"\u5E02\u5834\u9078\u5B9A\u627F\u8A8D\u5F85\u3061"} {"\u2014"} {pendingMarkets.length}{"\u4EF6"}</h2>
-              </div>
-              <div className="space-y-2.5">
-                {pendingMarkets.map((market) => (
-                  <div key={market.id} className="flex items-start gap-4 rounded-xl bg-black/30 p-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-sm">{market.market_name}</p>
-                      </div>
-                      <p className="mt-1 text-xs text-white/40 line-clamp-2">{market.recommended_entry_angle}</p>
-                      <p className="mt-1 text-[10px] text-white/30 line-clamp-2">{market.rationale}</p>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <button
-                        onClick={() => handleMarketApprove(market.id, "approve")}
-                        disabled={approvingMarket === market.id}
-                        className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white transition-all hover:bg-emerald-500 disabled:opacity-50"
-                      >
-                        {approvingMarket === market.id ? "..." : "\u9078\u5B9A"}
-                      </button>
-                      <button
-                        onClick={() => handleMarketApprove(market.id, "reject")}
-                        disabled={approvingMarket === market.id}
-                        className="rounded-lg bg-white/5 px-3.5 py-1.5 text-xs font-medium text-white/60 transition-all hover:bg-white/10 disabled:opacity-50"
-                      >
-                        {"\u5374\u4E0B"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
           {/* ---- KPI Cards ---- */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <KPICard label="LP数" value={data.lpCount} trend={null} color="blue" />
@@ -770,14 +660,14 @@ export default function DashboardPage() {
               color="emerald"
             />
             <KPICard
-              label="広告調整"
-              value={data.pipeline.find((s) => s.id === "6_ads_monitor")?.metrics?.bid_adjustments ?? "\u2014"}
+              label="V2ゲート通過"
+              value={data.pipeline.find((s) => s.id === "orchestrate_v2")?.metrics?.a1d_passed ?? "\u2014"}
               trend={null}
               color="orange"
             />
             <KPICard
-              label="改善提案"
-              value={data.pipeline.find((s) => s.id === "4_analytics_reporter")?.metrics?.suggestions ?? "\u2014"}
+              label="オファー数"
+              value={data.pipeline.find((s) => s.id === "orchestrate_v2")?.metrics?.offers_generated ?? "\u2014"}
               trend={null}
               color="pink"
             />
@@ -798,73 +688,6 @@ export default function DashboardPage() {
               {"\u{1F9E0}"} フィードバック
             </TabButton>
           </div>
-
-          {/* ---- Pending Ad Campaigns Banner ---- */}
-          {activeTab === "pipeline" && pendingAds.length > 0 && (
-            <section className="rounded-2xl border border-green-500/20 bg-gradient-to-r from-green-500/[.06] to-emerald-500/[.04] p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500/20 text-[10px]">{"\u{1F4E3}"}</span>
-                <h2 className="text-sm font-semibold text-green-300">{"広告キャンペーン承認待ち"} {"\u2014"} {pendingAds.length}{"件"}</h2>
-              </div>
-              <div className="space-y-3">
-                {pendingAds.map((ad) => (
-                  <div key={ad.id} className="rounded-xl bg-black/30 p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm">{ad.campaignName}</p>
-                        <p className="mt-1 text-[10px] text-white/30">{"日次予算: "}{ad.dailyBudget}{"円"}</p>
-
-                        {/* Headlines preview */}
-                        {ad.headlines.length > 0 && (
-                          <div className="mt-2">
-                            <p className="text-[10px] text-white/40 mb-1">{"見出し:"}</p>
-                            <div className="flex flex-wrap gap-1">
-                              {ad.headlines.slice(0, 5).map((h, i) => (
-                                <span key={i} className="rounded-md bg-green-500/10 px-2 py-0.5 text-[10px] text-green-400 border border-green-500/15">
-                                  {h}
-                                </span>
-                              ))}
-                              {ad.headlines.length > 5 && (
-                                <span className="text-[10px] text-white/20">+{ad.headlines.length - 5}</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Keywords preview */}
-                        {ad.keywords.length > 0 && (
-                          <div className="mt-2">
-                            <p className="text-[10px] text-white/40 mb-1">{"キーワード:"}</p>
-                            <p className="text-[10px] text-white/50">
-                              {ad.keywords.slice(0, 6).join(", ")}
-                              {ad.keywords.length > 6 && ` +${ad.keywords.length - 6}`}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex shrink-0 gap-2">
-                        <button
-                          onClick={() => handleAdApproval(ad.id, "approve")}
-                          disabled={approvingAd === ad.id}
-                          className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white transition-all hover:bg-emerald-500 disabled:opacity-50"
-                        >
-                          {approvingAd === ad.id ? "..." : "承認"}
-                        </button>
-                        <button
-                          onClick={() => handleAdApproval(ad.id, "reject")}
-                          disabled={approvingAd === ad.id}
-                          className="rounded-lg bg-white/5 px-3.5 py-1.5 text-xs font-medium text-white/60 transition-all hover:bg-white/10 disabled:opacity-50"
-                        >
-                          {"却下"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
 
           {/* ---- V2 Command Center Panel ---- */}
           {activeTab === "pipeline" && data.v2 && (
