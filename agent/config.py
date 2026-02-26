@@ -27,14 +27,11 @@ if not GCP_PROJECT_ID:
 GCP_REGION = os.environ.get("GCP_REGION", "asia-northeast1")
 
 # --- API Keys ---
-CLAUDE_API_KEY = (
-    os.environ.get("CLAUDE_API_KEY", "")
-    or os.environ.get("ANTHROPIC_API_KEY", "")
-)
-if not CLAUDE_API_KEY:
-    raise ValueError("CLAUDE_API_KEY or ANTHROPIC_API_KEY is required")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY is required")
 
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # --- Google Sheets ---
 GOOGLE_SHEETS_ID = os.environ.get("GOOGLE_SHEETS_ID", "")

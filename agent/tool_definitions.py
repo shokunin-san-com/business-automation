@@ -1,11 +1,14 @@
 """
-Claude API tool_use definitions — JSON schemas for the agent tools.
+Gemini Function Calling definitions — tool schemas for the agent.
 
-Each tool definition follows the Anthropic tool_use format:
-  { "name": str, "description": str, "input_schema": JSON Schema }
+Each tool definition follows the Gemini protos.FunctionDeclaration format.
+We define them as dicts and convert to protos at runtime.
 """
 
-TOOL_DEFINITIONS = [
+import google.generativeai as genai
+
+# Raw definitions (JSON-Schema-like, same structure as before but adapted for Gemini)
+_RAW_DEFINITIONS = [
     {
         "name": "read_logs",
         "description": (
@@ -13,11 +16,11 @@ TOOL_DEFINITIONS = [
             "Use this to check for errors, warnings, or recent execution results "
             "from any pipeline job."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "job_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": (
                         "Cloud Run job name to filter logs. "
                         "Default: 'marketprobe-pipeline'. "
@@ -25,20 +28,18 @@ TOOL_DEFINITIONS = [
                     ),
                 },
                 "severity": {
-                    "type": "string",
-                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-                    "description": "Minimum log severity to fetch. Default: 'ERROR'.",
+                    "type": "STRING",
+                    "description": "Minimum log severity to fetch. One of: DEBUG, INFO, WARNING, ERROR, CRITICAL. Default: 'ERROR'.",
                 },
                 "minutes": {
-                    "type": "integer",
+                    "type": "INTEGER",
                     "description": "How many minutes back to look. Default: 60.",
                 },
                 "limit": {
-                    "type": "integer",
+                    "type": "INTEGER",
                     "description": "Maximum number of log entries. Default: 50.",
                 },
             },
-            "required": [],
         },
     },
     {
@@ -47,10 +48,9 @@ TOOL_DEFINITIONS = [
             "List all Cloud Scheduler jobs with their schedule, state (ENABLED/PAUSED), "
             "and description. Use this to understand the current cron schedule."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {},
-            "required": [],
         },
     },
     {
@@ -59,11 +59,11 @@ TOOL_DEFINITIONS = [
             "Pause a Cloud Scheduler job so it stops executing on its cron schedule. "
             "The job can be resumed later."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "job_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Short name of the scheduler job to pause.",
                 },
             },
@@ -73,11 +73,11 @@ TOOL_DEFINITIONS = [
     {
         "name": "resume_scheduler_job",
         "description": "Resume a previously paused Cloud Scheduler job.",
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "job_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Short name of the scheduler job to resume.",
                 },
             },
@@ -90,11 +90,11 @@ TOOL_DEFINITIONS = [
             "Trigger a Cloud Scheduler job to run immediately, "
             "regardless of its cron schedule."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "job_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Short name of the scheduler job to trigger.",
                 },
             },
@@ -109,18 +109,18 @@ TOOL_DEFINITIONS = [
             "competitor_20_log, offer_3_log, lp_ready_log, pipeline_status, "
             "inquiry_log, deal_pipeline, downstream_kpi, winning_patterns, and more."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "sheet_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": (
                         "Name of the worksheet tab to read "
                         "(e.g. 'settings', 'micro_market_list', 'gate_decision_log')."
                     ),
                 },
                 "row_limit": {
-                    "type": "integer",
+                    "type": "INTEGER",
                     "description": "Maximum number of rows to return. Default: 100.",
                 },
             },
@@ -130,10 +130,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "list_sheets",
         "description": "List all worksheet tab names in the pipeline spreadsheet.",
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {},
-            "required": [],
         },
     },
     {
@@ -150,13 +149,13 @@ TOOL_DEFINITIONS = [
             "5_slack_reporter (slack-reporter), "
             "7_learning_engine (learning-engine), "
             "9_expansion_engine (expansion-engine). "
-            "V1 scripts (A_market_research, B_market_selection, etc.) are DEPRECATED — do NOT run them."
+            "V1 scripts (A_market_research, B_market_selection, etc.) are DEPRECATED."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "script_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": (
                         "Script key from the V2 pipeline dispatcher. "
                         "Examples: 'orchestrate_v2', '1_lp_generator', "
@@ -174,37 +173,32 @@ TOOL_DEFINITIONS = [
             "Returns status (running/succeeded/failed), creation time, "
             "and completion time."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "execution_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Full resource name of the execution to check.",
                 },
             },
             "required": ["execution_name"],
         },
     },
-    # ── GitHub tools ─────────────────────────────────────────────
     {
         "name": "get_github_file",
         "description": (
             "Get the contents of a file from the GitHub repository. "
-            "Returns the file content (decoded text), SHA, and path. "
-            "Use this to read source code, configs, or any file in the repo."
+            "Returns the file content (decoded text), SHA, and path."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "path": {
-                    "type": "string",
-                    "description": (
-                        "File path in the repository "
-                        "(e.g. 'agent/config.py', 'run.py', 'scripts/orchestrate_v2.py')."
-                    ),
+                    "type": "STRING",
+                    "description": "File path in the repository.",
                 },
                 "ref": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Branch or commit ref. Default: repo default branch.",
                 },
             },
@@ -215,28 +209,25 @@ TOOL_DEFINITIONS = [
         "name": "update_github_file",
         "description": (
             "Create or update a file in the GitHub repository. "
-            "Creates a commit directly on the specified branch. "
-            "Use this for small fixes, config changes, or creating new files. "
-            "Always work on a feature branch and create a PR — avoid committing "
-            "directly to main."
+            "Creates a commit directly on the specified branch."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "path": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "File path in the repository.",
                 },
                 "content": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "New file content (full file, not a patch).",
                 },
                 "message": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Git commit message (Japanese preferred).",
                 },
                 "branch": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Target branch. Default: repo default branch.",
                 },
             },
@@ -245,96 +236,74 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "create_pull_request",
-        "description": (
-            "Create a pull request on GitHub. "
-            "Use after updating files on a feature branch."
-        ),
-        "input_schema": {
-            "type": "object",
+        "description": "Create a pull request on GitHub.",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "title": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "PR title.",
                 },
                 "body": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "PR description (supports markdown).",
                 },
                 "head": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Source branch name.",
                 },
                 "base": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Target branch (default: main).",
                 },
             },
             "required": ["title", "body", "head"],
         },
     },
-    # ── Cloud Build tool ─────────────────────────────────────────
     {
         "name": "trigger_cloud_build",
         "description": (
             "Trigger a Cloud Build to rebuild and deploy a container. "
-            "Default config: 'cloudbuild-agent.yaml' (builds the agent container). "
-            "Use 'cloudbuild.yaml' for the pipeline container. "
-            "Use after code changes to redeploy."
+            "Default config: 'cloudbuild-agent.yaml' (agent). "
+            "Use 'cloudbuild.yaml' for the pipeline container."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "config_file": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": (
                         "Cloud Build config file path. "
                         "Options: 'cloudbuild-agent.yaml' (agent), "
-                        "'cloudbuild.yaml' (pipeline). "
-                        "Default: 'cloudbuild-agent.yaml'."
+                        "'cloudbuild.yaml' (pipeline)."
                     ),
                 },
             },
-            "required": [],
         },
     },
-    # ── Scheduler management tools ───────────────────────────────
     {
         "name": "register_schedule",
         "description": (
             "Create or update a Cloud Scheduler job. "
-            "Schedule can be a cron expression or natural language: "
-            "'毎朝9時', '毎日14:30', '毎週月曜9時', 'every 3 hours', "
-            "'0 9 * * *'. "
-            "The scheduler triggers a Cloud Run Job at the specified schedule."
+            "Schedule can be a cron expression or natural language."
         ),
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "job_name": {
-                    "type": "string",
-                    "description": (
-                        "Scheduler job name (e.g. 'schedule-v2-morning', "
-                        "'schedule-lp-daily')."
-                    ),
+                    "type": "STRING",
+                    "description": "Scheduler job name.",
                 },
                 "schedule": {
-                    "type": "string",
-                    "description": (
-                        "Cron expression or natural language. "
-                        "Examples: '0 9 * * *', '毎朝9時', '毎日14:30', "
-                        "'every 3 hours'."
-                    ),
+                    "type": "STRING",
+                    "description": "Cron expression or natural language (e.g. '0 9 * * *', '毎朝9時').",
                 },
                 "target_job_id": {
-                    "type": "string",
-                    "description": (
-                        "Cloud Run Job ID to trigger. "
-                        "Examples: 'orchestrate-v2', 'lp-generator', "
-                        "'learning-engine', 'expansion-engine', 'agent-orchestrator'."
-                    ),
+                    "type": "STRING",
+                    "description": "Cloud Run Job ID to trigger.",
                 },
                 "description": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Optional description of the schedule.",
                 },
             },
@@ -343,25 +312,20 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "list_schedules",
-        "description": (
-            "List all Cloud Scheduler jobs with their schedule, state, "
-            "and description. Same as list_scheduler_jobs — provided as "
-            "a convenient alias for scheduling workflows."
-        ),
-        "input_schema": {
-            "type": "object",
+        "description": "List all Cloud Scheduler jobs. Alias for list_scheduler_jobs.",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {},
-            "required": [],
         },
     },
     {
         "name": "delete_schedule",
         "description": "Delete a Cloud Scheduler job by name.",
-        "input_schema": {
-            "type": "object",
+        "parameters": {
+            "type": "OBJECT",
             "properties": {
                 "job_name": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "Short name of the scheduler job to delete.",
                 },
             },
@@ -369,3 +333,21 @@ TOOL_DEFINITIONS = [
         },
     },
 ]
+
+
+def get_gemini_tools() -> list:
+    """Convert raw definitions to Gemini protos.Tool format."""
+    func_declarations = []
+    for defn in _RAW_DEFINITIONS:
+        func_declarations.append(
+            genai.protos.FunctionDeclaration(
+                name=defn["name"],
+                description=defn["description"],
+                parameters=defn.get("parameters"),
+            )
+        )
+    return [genai.protos.Tool(function_declarations=func_declarations)]
+
+
+# Keep raw names for dispatch validation
+TOOL_NAMES = {d["name"] for d in _RAW_DEFINITIONS}

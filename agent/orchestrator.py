@@ -2,7 +2,7 @@
 Agent Orchestrator — autonomous pipeline management agent.
 
 Phase 1: Tool dispatch framework with --test-tools mode.
-Phase 2: Claude API tool_use loop for autonomous operation.
+Phase 2: Gemini Function Calling loop for autonomous operation.
 Phase 3: Snapshot-based diff verification with --run-with-verification.
 
 Usage:
@@ -22,11 +22,11 @@ import sys
 import time
 import traceback
 
-import anthropic
+import google.generativeai as genai
 
-from agent.config import CLAUDE_API_KEY, CLAUDE_MODEL, get_logger
+from agent.config import GEMINI_API_KEY, GEMINI_MODEL, get_logger
 from agent.system_prompt import SYSTEM_PROMPT
-from agent.tool_definitions import TOOL_DEFINITIONS
+from agent.tool_definitions import get_gemini_tools, TOOL_NAMES
 from agent.notifier import notify
 from agent.tools.logs_reader import read_logs
 from agent.tools.scheduler_client import (
@@ -112,13 +112,33 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# Phase 2: tool_use loop
+# Phase 2: Gemini Function Calling loop
 # ═══════════════════════════════════════════════════════════
+
+# Module-level model instance (lazy init)
+_gemini_model = None
+
+
+def _get_model():
+    """Lazy-init Gemini model with tools and system instruction."""
+    global _gemini_model
+    if _gemini_model is None:
+        genai.configure(api_key=GEMINI_API_KEY)
+        _gemini_model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            tools=get_gemini_tools(),
+            system_instruction=SYSTEM_PROMPT,
+            generation_config=genai.GenerationConfig(
+                max_output_tokens=4096,
+                temperature=0.7,
+            ),
+        )
+    return _gemini_model
 
 
 def run_agent(task: str = DEFAULT_TASK, max_turns: int = 15) -> tuple[str, int, int]:
     """
-    Run the autonomous agent with a Claude API tool_use loop.
+    Run the autonomous agent with a Gemini Function Calling loop.
 
     Args:
         task: The task/instruction for the agent to execute.
@@ -127,92 +147,89 @@ def run_agent(task: str = DEFAULT_TASK, max_turns: int = 15) -> tuple[str, int, 
     Returns:
         Tuple of (final_response, turns_used, tool_calls_count).
     """
-    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+    model = _get_model()
+    chat = model.start_chat()
 
-    messages = [{"role": "user", "content": task}]
     final_response = ""
     turn = 0
     total_tool_calls = 0
 
-    logger.info("Starting agent loop (max_turns=%d)", max_turns)
+    logger.info("Starting agent loop (max_turns=%d, model=%s)", max_turns, GEMINI_MODEL)
     logger.info("Task: %s", task[:200])
+
+    # Send initial message
+    try:
+        response = chat.send_message(task)
+    except Exception as e:
+        logger.error("Gemini API error on initial message: %s", e)
+        notify("Agent API Error", f"Gemini API call failed:\n```\n{e}\n```", is_error=True)
+        return (f"API Error: {e}", 1, 0)
 
     while turn < max_turns:
         turn += 1
         logger.info("── Turn %d/%d ──", turn, max_turns)
 
-        try:
-            response = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                tools=TOOL_DEFINITIONS,
-                messages=messages,
-            )
-        except anthropic.APIError as e:
-            logger.error("Claude API error: %s", e)
-            notify("Agent API Error", f"Claude API call failed:\n```\n{e}\n```", is_error=True)
-            return (f"API Error: {e}", turn, total_tool_calls)
-
-        logger.info("stop_reason=%s, usage=%s", response.stop_reason, response.usage)
-
-        # Process response content blocks
-        tool_results = []
+        # Extract function calls and text from response parts
+        function_calls = []
         text_parts = []
 
-        for block in response.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-                logger.info("Agent text: %s", block.text[:200])
-
-            elif block.type == "tool_use":
-                tool_name = block.name
-                tool_input = block.input
-                tool_use_id = block.id
-
-                total_tool_calls += 1
-                logger.info("Tool call: %s(%s)", tool_name, json.dumps(tool_input, ensure_ascii=False)[:200])
-
-                # Execute the tool
-                try:
-                    result_json = dispatch_tool(tool_name, tool_input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": result_json,
-                    })
-                    logger.info("Tool result: %s", result_json[:200])
-                except Exception as e:
-                    error_msg = f"Tool error: {e}"
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": json.dumps({"error": str(e)}),
-                        "is_error": True,
-                    })
-                    logger.error("Tool dispatch failed: %s", e)
-
-        # Check stop condition
-        if response.stop_reason == "end_turn":
-            final_response = "\n".join(text_parts)
-            logger.info("Agent completed (end_turn) at turn %d", turn)
+        try:
+            parts = response.candidates[0].content.parts
+        except (IndexError, AttributeError):
+            final_response = "Agent returned empty response."
+            logger.warning("Empty response at turn %d", turn)
             break
 
-        # If there are tool results, send them back
-        if tool_results:
-            # Add assistant's response to messages
-            messages.append({"role": "assistant", "content": response.content})
-            # Add tool results
-            messages.append({"role": "user", "content": tool_results})
-        else:
-            # No tool calls and not end_turn — shouldn't happen, but break to be safe
+        for part in parts:
+            if part.function_call.name:
+                function_calls.append(part.function_call)
+            if part.text:
+                text_parts.append(part.text)
+                logger.info("Agent text: %s", part.text[:200])
+
+        # If no function calls, agent is done (text-only response)
+        if not function_calls:
             final_response = "\n".join(text_parts) if text_parts else "Agent ended without response."
-            logger.warning("Agent ended without tool_use or end_turn at turn %d", turn)
+            logger.info("Agent completed at turn %d", turn)
             break
+
+        # Execute all function calls and collect responses
+        function_responses = []
+        for fc in function_calls:
+            tool_name = fc.name
+            tool_input = dict(fc.args) if fc.args else {}
+
+            total_tool_calls += 1
+            logger.info("Tool call: %s(%s)", tool_name, json.dumps(tool_input, ensure_ascii=False)[:200])
+
+            try:
+                result_json = dispatch_tool(tool_name, tool_input)
+                result_dict = json.loads(result_json)
+                logger.info("Tool result: %s", result_json[:200])
+            except Exception as e:
+                result_dict = {"error": str(e)}
+                logger.error("Tool dispatch failed: %s", e)
+
+            function_responses.append(
+                genai.protos.Part(
+                    function_response=genai.protos.FunctionResponse(
+                        name=tool_name,
+                        response={"result": result_dict},
+                    )
+                )
+            )
+
+        # Send function responses back to the model
+        try:
+            response = chat.send_message(function_responses)
+        except Exception as e:
+            logger.error("Gemini API error on function response: %s", e)
+            notify("Agent API Error", f"Gemini API call failed:\n```\n{e}\n```", is_error=True)
+            return (f"API Error: {e}", turn, total_tool_calls)
 
     else:
         # max_turns exceeded
-        final_response = f"Agent reached max_turns limit ({max_turns}). Last response: " + "\n".join(text_parts)
+        final_response = f"Agent reached max_turns limit ({max_turns})."
         logger.warning("Max turns (%d) exceeded", max_turns)
 
     return final_response, turn, total_tool_calls
@@ -254,7 +271,7 @@ def test_tools() -> bool:
     # ── 5. Verify tool definitions match dispatch ──
     print(f"\n{'─' * 40}")
     print("Checking tool_definitions ↔ dispatch consistency...")
-    definition_names = {t["name"] for t in TOOL_DEFINITIONS}
+    definition_names = TOOL_NAMES
     dispatch_names = set(TOOL_DISPATCH.keys())
     missing_dispatch = definition_names - dispatch_names
     missing_defs = dispatch_names - definition_names

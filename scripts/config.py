@@ -44,11 +44,7 @@ if _sa_json_env and not _sa_local_path.exists():
         # Last resort: write raw (may have literal \n that google-auth can't parse)
         _sa_local_path.write_text(_sa_json_env, encoding="utf-8")
 
-# --- API Keys ---
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
-
-# --- Gemini (fallback) ---
+# --- Gemini ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 

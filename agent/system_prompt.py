@@ -2,7 +2,7 @@
 System prompt for the autonomous pipeline agent.
 
 This prompt defines the agent's identity, capabilities, and behavioral guidelines
-for the Claude API tool_use loop.
+for the Gemini Function Calling loop.
 """
 
 SYSTEM_PROMPT = """あなたは MarketProbe / BVA System の自律運用エージェントです。

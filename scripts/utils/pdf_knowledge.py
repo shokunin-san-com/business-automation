@@ -1,5 +1,5 @@
 """
-PDF Knowledge Base — upload PDFs to GCS, extract summaries via Claude, store in Sheets.
+PDF Knowledge Base — upload PDFs to GCS, extract summaries via Gemini, store in Sheets.
 
 Provides knowledge context injection for idea generation and LP creation pipelines.
 """
@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import CREDENTIALS_DIR, CLAUDE_API_KEY, GEMINI_API_KEY, get_logger
+from config import CREDENTIALS_DIR, GEMINI_API_KEY, get_logger
 from utils.sheets_client import get_all_rows, append_row, find_row_index
 
 logger = get_logger(__name__)
@@ -91,10 +91,6 @@ JSON以外のテキストは含めないでください。
 }
 ```"""
 
-# Claude API max request size ~30MB base64. Use Gemini for larger files.
-CLAUDE_MAX_FILE_SIZE_MB = 25
-
-
 def _extract_with_gemini(pdf_path: str) -> dict:
     """Extract knowledge using Gemini API (handles large PDFs via File API)."""
     import google.generativeai as genai
@@ -120,43 +116,6 @@ def _extract_with_gemini(pdf_path: str) -> dict:
     return _parse_ai_response(raw)
 
 
-def _extract_with_claude(pdf_path: str) -> dict:
-    """Extract knowledge using Claude API (for smaller PDFs)."""
-    import anthropic
-
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-
-    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-
-    logger.info(f"Sending PDF to Claude for analysis: {Path(pdf_path).name} ({len(pdf_bytes) / 1024 / 1024:.1f} MB)")
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=8192,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_b64,
-                        },
-                    },
-                    {"type": "text", "text": EXTRACTION_PROMPT},
-                ],
-            }
-        ],
-    )
-
-    raw = response.content[0].text.strip()
-    return _parse_ai_response(raw)
-
-
 def _parse_ai_response(raw: str) -> dict:
     """Parse JSON from AI response, stripping code fences if present."""
     if raw.startswith("```"):
@@ -169,10 +128,7 @@ def _parse_ai_response(raw: str) -> dict:
 
 
 def extract_knowledge_from_pdf(pdf_path: str) -> dict:
-    """Extract chapter structure + summaries from PDF.
-
-    Uses Gemini for large files (>25MB) or when Gemini key is available,
-    falls back to Claude for smaller files.
+    """Extract chapter structure + summaries from PDF using Gemini.
 
     Returns:
         {
@@ -183,32 +139,10 @@ def extract_knowledge_from_pdf(pdf_path: str) -> dict:
             "applicable_to": "..."
         }
     """
-    file_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set")
 
-    # Large files: must use Gemini (Claude has ~30MB request limit)
-    if file_size_mb > CLAUDE_MAX_FILE_SIZE_MB:
-        if GEMINI_API_KEY:
-            return _extract_with_gemini(pdf_path)
-        else:
-            raise ValueError(
-                f"PDF is {file_size_mb:.1f}MB (Claude limit: {CLAUDE_MAX_FILE_SIZE_MB}MB). "
-                f"Set GEMINI_API_KEY to process large PDFs."
-            )
-
-    # Normal files: try Gemini first (faster, larger context), fallback to Claude
-    if GEMINI_API_KEY:
-        try:
-            return _extract_with_gemini(pdf_path)
-        except Exception as e:
-            logger.warning(f"Gemini extraction failed, falling back to Claude: {e}")
-            if CLAUDE_API_KEY:
-                return _extract_with_claude(pdf_path)
-            raise
-
-    if CLAUDE_API_KEY:
-        return _extract_with_claude(pdf_path)
-
-    raise RuntimeError("No AI API key configured (GEMINI_API_KEY or CLAUDE_API_KEY)")
+    return _extract_with_gemini(pdf_path)
 
 
 def upload_and_index(pdf_path: str, title: str | None = None) -> dict:
