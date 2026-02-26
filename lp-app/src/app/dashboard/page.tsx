@@ -111,7 +111,7 @@ const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers
   "3_form_sales": { icon: "\u2709\uFE0F", schedule: "平日 11:00", schedulers: ["schedule-form-sales"] },
   "4_analytics_reporter": { icon: "\u{1F4C8}", schedule: "毎日 01:00", schedulers: ["schedule-analytics"] },
   "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "毎週月曜 08:00", schedulers: ["schedule-slack-report"] },
-  "7_learning_engine": { icon: "\u{1F9E0}", schedule: "毎日 02:00", schedulers: ["schedule-learning-engine"] },
+  "7_learning_engine": { icon: "\u{1F9E0}", schedule: "毎日 19:00", schedulers: ["schedule-learning-engine"] },
   "9_expansion_engine": { icon: "\u{1F680}", schedule: "毎日 03:00", schedulers: ["schedule-expansion-engine"] },
 };
 

@@ -6,6 +6,9 @@ Flow: A0 → A1q → A1d → EX → C(20) → 0(3offers) → LP-guard → Notify
 All scoring is **prohibited**. Decisions are PASS/FAIL based on evidence URLs.
 run_id is generated once and propagated to all steps for traceability.
 
+Continuous mode: settings シートの v2_continuous_mode=true で連続実行。
+完了後に Cloud Run Job を自動再トリガーする（最大10回連続、エラー時停止）。
+
 Usage:
     SCRIPT_NAME=orchestrate_v2 python run.py
     python scripts/orchestrate_v2.py
@@ -13,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -20,10 +24,17 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import DATA_DIR, get_logger
-from utils.sheets_client import get_all_rows, append_rows, get_sheet_urls
+from config import DATA_DIR, GCP_PROJECT_ID, get_logger
+from utils.sheets_client import (
+    get_all_rows, append_rows, get_sheet_urls,
+    get_setting, find_row_index, update_cell,
+)
 from utils.slack_notifier import send_message as notify
 from utils.status_writer import update_status
+
+GCP_REGION = os.getenv("GCP_REGION", "asia-northeast1")
+CONTINUOUS_MAX_RUNS = 10
+CONTINUOUS_COOLDOWN_SEC = 60  # 再トリガー前の待機時間
 
 # Import V2 step modules
 from A_market_research import (
@@ -274,6 +285,107 @@ def _abort_pipeline(steps: list[dict], run_id: str, start_time: float):
 
     notify("\n".join(lines))
     update_status("orchestrate_v2", "error", f"パイプライン停止 ({total_duration})")
+
+
+# ---------------------------------------------------------------------------
+# Continuous mode — self re-trigger
+# ---------------------------------------------------------------------------
+
+def _get_continuous_settings() -> tuple[bool, int]:
+    """Read continuous mode flag and current run count from settings sheet.
+
+    Returns:
+        (enabled, current_count)
+    """
+    try:
+        enabled = get_setting("v2_continuous_mode", "false").lower() == "true"
+        count = int(get_setting("v2_continuous_count", "0"))
+        return enabled, count
+    except Exception as e:
+        logger.warning(f"Failed to read continuous settings: {e}")
+        return False, 0
+
+
+def _update_continuous_count(new_count: int) -> None:
+    """Update the v2_continuous_count in settings sheet."""
+    try:
+        row = find_row_index("settings", "key", "v2_continuous_count")
+        if row:
+            # "value" is column B (index 2) in settings sheet
+            update_cell("settings", row, 2, str(new_count))
+        else:
+            # Key doesn't exist yet — append it
+            append_rows("settings", [["v2_continuous_count", str(new_count)]])
+    except Exception as e:
+        logger.warning(f"Failed to update continuous count: {e}")
+
+
+def _trigger_next_run() -> bool:
+    """Trigger the next Cloud Run Job execution of orchestrate-v2.
+
+    Returns True if successfully triggered.
+    """
+    try:
+        from google.cloud import run_v2
+        from google.oauth2 import service_account
+
+        sa_path = Path(__file__).resolve().parent.parent / "credentials" / "service_account.json"
+        creds = service_account.Credentials.from_service_account_file(
+            str(sa_path),
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        client = run_v2.JobsClient(credentials=creds)
+
+        job_name = (
+            f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}"
+            f"/jobs/orchestrate-v2"
+        )
+        client.run_job(name=job_name)
+        logger.info("Continuous mode: triggered next run")
+        return True
+    except Exception as e:
+        logger.error(f"Continuous mode: failed to trigger next run: {e}")
+        return False
+
+
+def _handle_continuous_mode(success: bool) -> None:
+    """Handle continuous mode logic after pipeline completion.
+
+    - On error: reset count, stop
+    - On success: check count < max, increment, trigger next
+    """
+    enabled, count = _get_continuous_settings()
+
+    if not enabled:
+        logger.info("Continuous mode: disabled")
+        if count > 0:
+            _update_continuous_count(0)
+        return
+
+    if not success:
+        logger.info("Continuous mode: stopping due to pipeline error")
+        _update_continuous_count(0)
+        notify(f"🔄 *連続実行停止* — エラー発生のため (実行回数: {count})")
+        return
+
+    new_count = count + 1
+    if new_count >= CONTINUOUS_MAX_RUNS:
+        logger.info(f"Continuous mode: reached max runs ({CONTINUOUS_MAX_RUNS})")
+        _update_continuous_count(0)
+        notify(f"🔄 *連続実行完了* — 最大{CONTINUOUS_MAX_RUNS}回に到達。カウントリセット済み")
+        return
+
+    _update_continuous_count(new_count)
+    logger.info(f"Continuous mode: run {new_count}/{CONTINUOUS_MAX_RUNS}, cooldown {CONTINUOUS_COOLDOWN_SEC}s")
+    notify(f"🔄 *連続実行* — {new_count}/{CONTINUOUS_MAX_RUNS}回目完了。{CONTINUOUS_COOLDOWN_SEC}秒後に次を開始")
+
+    time.sleep(CONTINUOUS_COOLDOWN_SEC)
+
+    if _trigger_next_run():
+        logger.info("Continuous mode: next run triggered successfully")
+    else:
+        _update_continuous_count(0)
+        notify("🔄 *連続実行停止* — 再トリガー失敗")
 
 
 # ---------------------------------------------------------------------------
@@ -598,11 +710,16 @@ def main():
         )
         logger.info(f"V2 パイプライン完了: {total_duration}")
 
+        # Continuous mode: re-trigger if enabled
+        _handle_continuous_mode(success=(not has_errors))
+
     except Exception as e:
         elapsed = time.time() - start_time
         logger.error(f"V2 Pipeline crashed: {e}")
         update_status("orchestrate_v2", "error", f"致命的エラー: {str(e)}")
         notify(f"🚨 *V2パイプライン致命的エラー*\n```{str(e)[:500]}```")
+        # Continuous mode: stop on crash
+        _handle_continuous_mode(success=False)
         raise
 
 

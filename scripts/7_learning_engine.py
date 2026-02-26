@@ -4,7 +4,7 @@
 Aggregates performance data, detects trends, generates insights,
 and maintains the learning memory for continuous AI improvement.
 
-Scheduled to run daily at 2:00 AM JST (after analytics_reporter).
+Scheduled to run daily at 19:00 JST.
 """
 
 import sys

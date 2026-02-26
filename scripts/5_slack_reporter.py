@@ -11,7 +11,7 @@ from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import GOOGLE_SHEETS_ID, get_logger
-from utils.sheets_client import get_all_rows, get_rows_by_status, get_sheet_urls
+from utils.sheets_client import get_all_rows, get_sheet_urls
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.learning_engine import detect_trends, get_learning_context
@@ -89,39 +89,6 @@ def _get_top_suggestions() -> list[dict]:
     ][:5]
 
 
-def _get_trend_summary(active_ideas: list[dict]) -> list[str]:
-    """Get trend summary lines for active business ideas."""
-    trend_lines = []
-    trend_emoji = {"up": ":arrow_up:", "down": ":arrow_down:", "flat": ":arrow_right:"}
-
-    for idea in active_ideas:
-        bid = idea.get("id", "")
-        if not bid:
-            continue
-        try:
-            trend = detect_trends(bid, lookback=7)
-        except Exception:
-            continue
-
-        if trend.get("days_analyzed", 0) < 2:
-            continue
-
-        name = idea.get("name", bid)
-        trends = trend.get("trends", {})
-        score_trend = trend_emoji.get(trends.get("score", "flat"), ":arrow_right:")
-        pv_trend = trend_emoji.get(trends.get("pageviews", "flat"), ":arrow_right:")
-        latest = trend.get("latest_score", 0)
-        avg = trend.get("avg_score", 0)
-
-        line = f"  *{name}*: スコア {latest} (平均{avg:.0f}) {score_trend} / PV {pv_trend}"
-        trend_lines.append(line)
-
-        # Add anomalies
-        for anomaly in trend.get("anomalies", []):
-            trend_lines.append(f"    :rotating_light: {anomaly}")
-
-    return trend_lines
-
 
 def _get_recent_insights() -> list[str]:
     """Get recent high-priority AI insights for the report."""
@@ -150,13 +117,43 @@ def _get_recent_insights() -> list[str]:
     return lines
 
 
+def _get_v2_pipeline_summary() -> dict:
+    """Get V2 pipeline summary (replaces V1 business_ideas)."""
+    summary: dict = {
+        "pass_markets": 0,
+        "total_offers": 0,
+        "latest_run_id": "",
+        "lp_ready": 0,
+    }
+    try:
+        gate_rows = get_all_rows("gate_decision_log")
+        pass_rows = [r for r in gate_rows if r.get("status") == "PASS"]
+        summary["pass_markets"] = len(pass_rows)
+        if pass_rows:
+            summary["latest_run_id"] = pass_rows[-1].get("run_id", "")[:8]
+    except Exception:
+        pass
+    try:
+        offer_rows = get_all_rows("offer_3_log")
+        summary["total_offers"] = len(offer_rows)
+    except Exception:
+        pass
+    try:
+        lp_rows = get_all_rows("lp_ready_log")
+        ready = [r for r in lp_rows if r.get("status") == "READY"]
+        summary["lp_ready"] = len(ready)
+    except Exception:
+        pass
+    return summary
+
+
 def build_report() -> str:
-    """Build the daily report text for Slack."""
+    """Build the daily report text for Slack (V2 pipeline version)."""
     dashboard_url = "https://lp-app-pi.vercel.app/dashboard"
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%m/%d")
 
-    active_ideas = get_rows_by_status("business_ideas", "active")
-    draft_ideas = get_rows_by_status("business_ideas", "draft")
+    # V2 pipeline summary (replaces V1 business_ideas)
+    v2_summary = _get_v2_pipeline_summary()
     analytics = _get_daily_analytics()
     sns_counts = _count_daily_sns_posts()
     form_counts = _count_daily_form_submissions()
@@ -165,24 +162,33 @@ def build_report() -> str:
     # Get sheet URLs for linking
     try:
         sheet_urls = get_sheet_urls([
-            "business_ideas", "analytics", "sns_posts",
+            "gate_decision_log", "offer_3_log", "analytics", "sns_posts",
             "form_sales_targets", "improvement_suggestions",
-            "market_research", "market_selection", "competitor_analysis",
+            "micro_market_list", "competitor_20_log",
         ])
     except Exception:
         sheet_urls = {}
 
-    bi_link = f" <{sheet_urls['business_ideas']}|📊シート>" if "business_ideas" in sheet_urls else ""
+    gate_link = f" <{sheet_urls['gate_decision_log']}|📊>" if "gate_decision_log" in sheet_urls else ""
+    offer_link = f" <{sheet_urls['offer_3_log']}|📊>" if "offer_3_log" in sheet_urls else ""
     analytics_link = f" <{sheet_urls['analytics']}|📊シート>" if "analytics" in sheet_urls else ""
 
     lines = [
         ":chart_with_upwards_trend: *日次レポート*",
         f"対象日: {yesterday}",
         "",
-        f":bulb: *事業案*: {len(active_ideas)}件 active / {len(draft_ideas)}件 draft{bi_link}",
+        f":microscope: *V2パイプライン*: PASS市場 {v2_summary['pass_markets']}件{gate_link}"
+        f" / オファー {v2_summary['total_offers']}件{offer_link}"
+        f" / LP READY {v2_summary['lp_ready']}件",
+    ]
+
+    if v2_summary["latest_run_id"]:
+        lines.append(f"  最新run: `{v2_summary['latest_run_id']}`")
+
+    lines.extend([
         "",
         f"*--- LP パフォーマンス（前日）---*{analytics_link}",
-    ]
+    ])
 
     if not analytics:
         lines.append("_データなし（GA4設定を確認してください）_")
@@ -191,13 +197,8 @@ def build_report() -> str:
         sorted_ids = sorted(analytics.keys(), key=lambda x: analytics[x]["pageviews"], reverse=True)
         for bid in sorted_ids:
             m = analytics[bid]
-            idea_name = bid
-            for idea in active_ideas:
-                if idea["id"] == bid:
-                    idea_name = idea["name"]
-                    break
             lines.append(
-                f"  *{idea_name}*: "
+                f"  *{bid}*: "
                 f"PV {m['pageviews']} / Session {m['sessions']} / "
                 f"CVR {m['conversions']} / 直帰率 {m['bounce_rate']}%"
             )
@@ -212,11 +213,31 @@ def build_report() -> str:
         f":envelope: フォーム営業: {sum(form_counts.values())}件{form_link}",
     ])
 
-    # Trend analysis section
-    trend_lines = _get_trend_summary(active_ideas)
-    if trend_lines:
-        lines.extend(["", "*--- トレンド分析 ---*"])
-        lines.extend(trend_lines)
+    # Trend analysis section (V2: use offer run_ids for trends)
+    try:
+        offer_rows = get_all_rows("offer_3_log")
+        seen_runs = set()
+        trend_lines = []
+        for offer in offer_rows:
+            rid = offer.get("run_id", "")
+            if rid and rid not in seen_runs:
+                seen_runs.add(rid)
+                try:
+                    trend = detect_trends(rid, lookback=7)
+                    if trend.get("days_analyzed", 0) >= 2:
+                        trends_data = trend.get("trends", {})
+                        pv_trend_emoji = {
+                            "up": ":arrow_up:", "down": ":arrow_down:", "flat": ":arrow_right:"
+                        }.get(trends_data.get("pageviews", "flat"), ":arrow_right:")
+                        market = offer.get("offer_name", rid[:8])
+                        trend_lines.append(f"  *{market}*: PV {pv_trend_emoji}")
+                except Exception:
+                    pass
+        if trend_lines:
+            lines.extend(["", "*--- トレンド分析 ---*"])
+            lines.extend(trend_lines[:5])
+    except Exception as te:
+        logger.warning(f"Trend section skipped: {te}")
 
     if top_suggestions:
         lines.extend(["", "*--- 優先改善提案 ---*"])
@@ -249,11 +270,10 @@ def build_report() -> str:
     except Exception as e:
         logger.warning(f"Budget allocation failed: {e}")
 
-    # Market exploration links if data exists
-    mr_link = f"<{sheet_urls['market_research']}|市場調査>" if "market_research" in sheet_urls else ""
-    ms_link = f"<{sheet_urls['market_selection']}|市場選定>" if "market_selection" in sheet_urls else ""
-    ca_link = f"<{sheet_urls['competitor_analysis']}|競合分析>" if "competitor_analysis" in sheet_urls else ""
-    exploration_links = " / ".join(lnk for lnk in [mr_link, ms_link, ca_link] if lnk)
+    # V2 exploration links
+    mm_link = f"<{sheet_urls['micro_market_list']}|市場一覧>" if "micro_market_list" in sheet_urls else ""
+    comp_link = f"<{sheet_urls['competitor_20_log']}|競合分析>" if "competitor_20_log" in sheet_urls else ""
+    exploration_links = " / ".join(lnk for lnk in [mm_link, comp_link] if lnk)
     if exploration_links:
         lines.append(f"\n📊 *スプレッドシート:* {exploration_links}")
 

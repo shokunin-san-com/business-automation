@@ -389,10 +389,17 @@ def validate_a1_quick(data: list | dict) -> ValidationResult:
 
         # At least 1 category with concrete value + URL
         categories_met = 0
+
+        # Format A: separate keys (demand_evidence, seriousness_evidence, tailwind_evidence)
         for cat_key in ("demand_evidence", "seriousness_evidence", "tailwind_evidence"):
             ev = item.get(cat_key, {})
             if isinstance(ev, dict) and ev.get("value") and ev.get("url"):
                 categories_met += 1
+
+        # Format B: single category_evidence object (current prompt format)
+        cat_ev = item.get("category_evidence", {})
+        if isinstance(cat_ev, dict) and cat_ev.get("value") and cat_ev.get("url"):
+            categories_met += 1
 
         if categories_met == 0:
             item["status"] = "FAIL"

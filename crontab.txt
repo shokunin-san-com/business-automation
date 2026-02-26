@@ -35,8 +35,8 @@ PYTHON=$PROJECT/.venv/bin/python
 # --- 毎日 8:00 — Slackレポート ---
 0 8 * * *  cd $PROJECT && $PYTHON scripts/5_slack_reporter.py >> data/logs/cron.log 2>&1
 
-# --- 毎日 2:00 — 学習エンジン（V2+下流+拡張） ---
-0 2 * * *  cd $PROJECT && $PYTHON scripts/7_learning_engine.py >> data/logs/cron.log 2>&1
+# --- 毎日 19:00 — 学習エンジン（V2+下流+拡張） ---
+0 19 * * *  cd $PROJECT && $PYTHON scripts/7_learning_engine.py >> data/logs/cron.log 2>&1
 
 # --- 毎日 3:00 — 拡張エンジン（勝ちパターン検出・SOP生成） ---
 0 3 * * *  cd $PROJECT && $PYTHON scripts/9_expansion_engine.py >> data/logs/cron.log 2>&1
