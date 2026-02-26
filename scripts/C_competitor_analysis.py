@@ -132,9 +132,12 @@ def analyze_competitors_20(
         validator=validate_competitor_20,
     )
 
+    # Validator now always returns {"competitors": [...], "gap_top3": [...]}
+    # Handle edge cases where result may still be a raw list or unexpected format
     if isinstance(result, list):
-        # Validator may return corrected dict or list
         result = {"competitors": result, "gap_top3": []}
+    elif isinstance(result, dict) and "competitors" not in result:
+        result = {"competitors": [], "gap_top3": []}
 
     return result
 

@@ -505,12 +505,32 @@ def validate_a1_deep(data: dict) -> ValidationResult:
 
 
 def validate_competitor_20(data: list | dict) -> ValidationResult:
-    """Validate 20-company competitor template output."""
+    """Validate 20-company competitor template output.
+
+    Accepts two formats:
+      - Format A (full response): {"competitors": [...], "gap_top3": [...]}
+      - Format B (list only): [{"company_name": ...}, ...]
+    """
     errors: list[str] = []
     warnings: list[str] = []
+    gap_top3: list = []
 
-    if isinstance(data, dict):
+    # Format A: full response object with "competitors" key
+    if isinstance(data, dict) and "competitors" in data:
+        gap_top3 = data.get("gap_top3", [])
+        competitors = data.get("competitors", [])
+        if not isinstance(competitors, list):
+            return ValidationResult(valid=False, errors=["competitors が配列ではありません"])
+        data = competitors  # validate the competitors list below
+
+    # Format B: plain list of competitors
+    elif isinstance(data, list):
+        pass  # already a list
+
+    # Fallback: single competitor dict (no "competitors" key)
+    elif isinstance(data, dict):
         data = [data]
+
     if not isinstance(data, list) or len(data) == 0:
         return ValidationResult(valid=False, errors=["空の結果または不正な型"])
 
@@ -528,11 +548,12 @@ def validate_competitor_20(data: list | dict) -> ValidationResult:
         if not item.get("url"):
             warnings.append(f"競合[{i}]: URLが空（{item.get('company_name', '不明')}）")
 
+    # Return the full structure (competitors + gap_top3) for downstream use
     return ValidationResult(
         valid=len(errors) == 0,
         errors=errors,
         warnings=warnings,
-        data=data,
+        data={"competitors": data, "gap_top3": gap_top3},
     )
 
 

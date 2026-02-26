@@ -667,11 +667,12 @@ def main():
         )
 
         # Build V2 metrics for dashboard display
+        # Note: all values must be primitives (str/int/float) — no nested dicts
+        #       because the dashboard renders {v} directly as React children
         v2_metrics: dict = {
             "run_id": run_id,
             "total_duration_sec": int(elapsed),
             "lp_status": lp_check["status"],
-            "steps": {s["name"]: s["status"] for s in steps},
         }
         # Extract counts from each step for dashboard metric chips
         for s in steps:

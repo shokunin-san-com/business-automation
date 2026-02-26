@@ -990,7 +990,9 @@ export default function DashboardPage() {
 
                     {Object.keys(script.metrics).length > 0 && (
                       <div className="relative mt-3 flex flex-wrap gap-2 border-t border-white/[.06] pt-3">
-                        {Object.entries(script.metrics).map(([k, v]) => (
+                        {Object.entries(script.metrics)
+                          .filter(([, v]) => typeof v !== "object" || v === null)
+                          .map(([k, v]) => (
                           <span key={k} className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
                             {({
                               // V2 metrics
@@ -1027,7 +1029,7 @@ export default function DashboardPage() {
                               patterns_detected: "パターン検出",
                               sops_generated: "SOP生成",
                               v2_insights: "V2インサイト",
-                            } as Record<string, string>)[k] || k.replace(/_/g, " ")}: <span className="text-white/70 font-medium">{v}</span>
+                            } as Record<string, string>)[k] || k.replace(/_/g, " ")}: <span className="text-white/70 font-medium">{String(v)}</span>
                           </span>
                         ))}
                       </div>
