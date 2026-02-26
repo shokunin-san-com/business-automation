@@ -103,7 +103,7 @@ def check_lp_ready(run_id: str) -> dict:
 
     Conditions:
     1. gate_decision_log has PASS for this run_id
-       OR exploration_lane_log has ACTIVE for this run_id
+       (exploration_lane ACTIVE is NOT sufficient — evidence gate must pass)
     2. competitor_20_log has records for this run_id
     3. offer_3_log has 3 complete records for this run_id
 
@@ -112,22 +112,27 @@ def check_lp_ready(run_id: str) -> dict:
     missing = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # 1. Gate check
+    # 1. Gate check — A1d PASS required (exploration lane alone is not enough)
     gate_ok = False
+    is_exploration_only = False
     try:
         gate_rows = get_all_rows("gate_decision_log")
         gate_pass = [r for r in gate_rows if r.get("run_id") == run_id and r.get("status") == "PASS"]
         if gate_pass:
             gate_ok = True
         else:
+            # Check if running via exploration lane
             lane_rows = get_all_rows("exploration_lane_log")
             lane_active = [r for r in lane_rows if r.get("run_id") == run_id and r.get("status") == "ACTIVE"]
             if lane_active:
-                gate_ok = True
+                is_exploration_only = True
     except Exception:
         pass
     if not gate_ok:
-        missing.append("gate_decision_log: PASSレコードなし")
+        if is_exploration_only:
+            missing.append("探索レーン中: A1dゲート未通過（ヒアリングで証拠収集後に再判定が必要）")
+        else:
+            missing.append("gate_decision_log: PASSレコードなし")
 
     # 2. Competitor check
     competitor_ok = False
@@ -184,6 +189,7 @@ def check_lp_ready(run_id: str) -> dict:
         "gate_ok": gate_ok,
         "competitor_ok": competitor_ok,
         "offer_ok": offer_ok,
+        "is_exploration_only": is_exploration_only,
         "missing": missing,
     }
 
@@ -245,6 +251,9 @@ def send_pipeline_report(
         lines.append(f"🔴 *LP作成: BLOCKED*")
         for m in lp_check.get("missing", []):
             lines.append(f"    → {m}")
+        if lp_check.get("is_exploration_only"):
+            lines.append("")
+            lines.append("📋 *次のアクション:* 探索レーン市場のヒアリングで証拠を収集し、再度パイプラインを実行してください")
 
     # Spreadsheet link
     from config import GOOGLE_SHEETS_ID
