@@ -35,7 +35,7 @@ export default async function AdminDashboard() {
     .eq("status", "published");
 
   const categories: Record<string, number> = {};
-  (posts || []).forEach((p) => {
+  (posts || []).forEach((p: { category: string | null; status: string }) => {
     const cat = p.category || "未分類";
     categories[cat] = (categories[cat] || 0) + 1;
   });
