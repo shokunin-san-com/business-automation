@@ -80,11 +80,15 @@ export async function getAllArticles(
 ): Promise<BlogArticle[]> {
   try {
     const rows = await getAllRows("blog_articles");
+    console.log(`[blog-data] getAllArticles: fetched ${rows.length} rows from blog_articles`);
+
     const published = rows.filter((r) => {
       if (r.status !== "published") return false;
       if (businessId && r.business_id !== businessId) return false;
       return true;
     });
+
+    console.log(`[blog-data] getAllArticles: ${published.length} published articles`);
 
     return published.map((row) => {
       let tags: string[] = [];
@@ -113,7 +117,8 @@ export async function getAllArticles(
         generated_at: row.generated_at || "",
       };
     });
-  } catch {
+  } catch (err) {
+    console.error("[blog-data] getAllArticles error:", err);
     return [];
   }
 }
