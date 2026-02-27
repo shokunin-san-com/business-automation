@@ -3,6 +3,8 @@ sns_scheduled_poster.py — Post queued SNS posts from sns_queue.
 
 Reads queued posts, evaluates risk, posts to Twitter/LinkedIn,
 and updates status. Designed to run on Cloud Scheduler (every 3 hours).
+
+Daily limits: Twitter 2/day, LinkedIn 2/day.
 """
 
 import sys
@@ -12,7 +14,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import get_logger
-from utils.sheets_client import get_all_rows, update_cell_by_key as update_cell
+from utils.sheets_client import get_all_rows, batch_update_by_key
 from utils.twitter_client import post_tweet
 from utils.linkedin_client import post_text as post_linkedin
 from utils.risk_scorer import evaluate as evaluate_risk
@@ -21,10 +23,22 @@ from utils.status_writer import update_status
 
 logger = get_logger("sns_scheduled_poster", "sns_scheduled_poster.log")
 
-MAX_POSTS_PER_RUN = 5        # Max posts per execution
+MAX_POSTS_PER_RUN = 4         # Max posts per execution
 POST_INTERVAL_SEC = 30        # Seconds between posts (rate limit safety)
-MAX_TWITTER_PER_RUN = 3
-MAX_LINKEDIN_PER_RUN = 2
+DAILY_TWITTER_LIMIT = 2       # X(Twitter): 2 posts/day
+DAILY_LINKEDIN_LIMIT = 2      # LinkedIn: 2 posts/day
+
+
+def _count_today_posted(all_rows: list[dict], platform: str) -> int:
+    """Count how many posts were already posted today for a platform."""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    count = 0
+    for r in all_rows:
+        if (r.get("status") == "posted"
+                and r.get("platform") == platform
+                and str(r.get("posted_at", "")).startswith(today_str)):
+            count += 1
+    return count
 
 
 def _get_queued_posts() -> list[dict]:
@@ -61,13 +75,31 @@ def main():
     update_status("sns_scheduled_poster", "running", "キュー投稿処理中...")
 
     try:
-        queued = _get_queued_posts()
+        # Single API call to get all rows (reused for daily count + queued filtering)
+        all_rows = get_all_rows("sns_queue")
+
+        queued = [r for r in all_rows if r.get("status") == "queued"]
+        queued.sort(key=lambda r: r.get("queue_id", ""))
+
         if not queued:
             logger.info("No queued posts. Exiting.")
             update_status("sns_scheduled_poster", "success", "キュー空")
             return
 
         logger.info(f"Found {len(queued)} queued posts")
+
+        # Check daily limits (already posted today)
+        twitter_today = _count_today_posted(all_rows, "twitter")
+        linkedin_today = _count_today_posted(all_rows, "linkedin")
+        logger.info(f"Today's posts: Twitter={twitter_today}/{DAILY_TWITTER_LIMIT}, LinkedIn={linkedin_today}/{DAILY_LINKEDIN_LIMIT}")
+
+        twitter_remaining = max(0, DAILY_TWITTER_LIMIT - twitter_today)
+        linkedin_remaining = max(0, DAILY_LINKEDIN_LIMIT - linkedin_today)
+
+        if twitter_remaining == 0 and linkedin_remaining == 0:
+            logger.info("Daily limits reached for all platforms. Exiting.")
+            update_status("sns_scheduled_poster", "success", "本日の投稿上限到達")
+            return
 
         twitter_count = 0
         linkedin_count = 0
@@ -83,15 +115,17 @@ def main():
             queue_id = post.get("queue_id", "")
             text = post.get("post_text", "")
 
-            # Enforce per-platform limits
-            if platform == "twitter" and twitter_count >= MAX_TWITTER_PER_RUN:
+            # Enforce daily platform limits
+            if platform == "twitter" and twitter_count >= twitter_remaining:
                 continue
-            if platform == "linkedin" and linkedin_count >= MAX_LINKEDIN_PER_RUN:
+            if platform == "linkedin" and linkedin_count >= linkedin_remaining:
                 continue
 
             if not text:
-                update_cell("sns_queue", "queue_id", queue_id, "status", "skipped")
-                update_cell("sns_queue", "queue_id", queue_id, "error_detail", "empty text")
+                batch_update_by_key("sns_queue", "queue_id", queue_id, {
+                    "status": "skipped",
+                    "error_detail": "empty text",
+                })
                 total_skipped += 1
                 continue
 
@@ -107,8 +141,10 @@ def main():
 
             if risk.decision == "block":
                 logger.warning(f"Post {queue_id} blocked (risk={risk.score}): {risk.detail}")
-                update_cell("sns_queue", "queue_id", queue_id, "status", "skipped")
-                update_cell("sns_queue", "queue_id", queue_id, "error_detail", f"risk_blocked: {risk.detail}")
+                batch_update_by_key("sns_queue", "queue_id", queue_id, {
+                    "status": "skipped",
+                    "error_detail": f"risk_blocked: {risk.detail}",
+                })
                 total_skipped += 1
                 continue
 
@@ -116,11 +152,12 @@ def main():
             logger.info(f"Posting {queue_id} to {platform} (risk={risk.score})")
             status, url_or_error = _post_to_platform(text, platform)
 
-            update_cell("sns_queue", "queue_id", queue_id, "status", status)
-            update_cell("sns_queue", "queue_id", queue_id, "posted_at", now)
-
             if status == "posted":
-                update_cell("sns_queue", "queue_id", queue_id, "post_url", url_or_error)
+                batch_update_by_key("sns_queue", "queue_id", queue_id, {
+                    "status": status,
+                    "posted_at": now,
+                    "post_url": url_or_error,
+                })
                 total_posted += 1
                 if platform == "twitter":
                     twitter_count += 1
@@ -128,7 +165,11 @@ def main():
                     linkedin_count += 1
                 logger.info(f"  → Posted: {url_or_error}")
             else:
-                update_cell("sns_queue", "queue_id", queue_id, "error_detail", url_or_error)
+                batch_update_by_key("sns_queue", "queue_id", queue_id, {
+                    "status": status,
+                    "posted_at": now,
+                    "error_detail": url_or_error,
+                })
                 total_failed += 1
                 logger.error(f"  → Failed: {url_or_error}")
 

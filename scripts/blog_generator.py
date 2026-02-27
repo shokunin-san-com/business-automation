@@ -2,7 +2,7 @@
 blog_generator.py — Generate 50 SEO blog articles for a target market.
 
 Generates articles across 10 categories (5 per category),
-stores in blog_articles sheet and uploads to GCS.
+stores in Supabase posts table (primary) and blog_articles sheet (fallback).
 """
 
 import sys
@@ -26,6 +26,7 @@ logger = get_logger("blog_generator", "blog_generator.log")
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
 LP_BASE_URL = "https://lp-app-pi.vercel.app"
+DEFAULT_MEDIA_ID = "shokunin-san"
 
 # 10 categories x 5 articles each = 50 articles
 ARTICLE_TOPICS = {
@@ -152,16 +153,33 @@ def _get_market_info(business_id: str) -> dict:
     }
 
 
-def generate_articles(business_id: str) -> int:
+def _try_supabase_upsert(post_data: dict) -> bool:
+    """Try to upsert to Supabase. Returns True on success."""
+    try:
+        from utils.supabase_client import upsert_post
+        return upsert_post(post_data)
+    except Exception as e:
+        logger.warning(f"Supabase upsert failed (will use Sheets fallback): {e}")
+        return False
+
+
+def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int:
     """Generate all blog articles for a business."""
     market = _get_market_info(business_id)
     lp_url = f"{LP_BASE_URL}/lp/{quote(business_id, safe='')}"
 
     template = jinja_env.get_template("blog_prompt.j2")
 
-    # Check existing articles
-    existing = get_all_rows("blog_articles")
-    existing_slugs = {r.get("slug", "") for r in existing}
+    # Check existing articles (try Supabase first, fall back to Sheets)
+    existing_slugs: set[str] = set()
+    try:
+        from utils.supabase_client import get_existing_slugs
+        existing_slugs = get_existing_slugs(media_id)
+        logger.info(f"Loaded {len(existing_slugs)} existing slugs from Supabase")
+    except Exception:
+        existing = get_all_rows("blog_articles")
+        existing_slugs = {r.get("slug", "") for r in existing}
+        logger.info(f"Loaded {len(existing_slugs)} existing slugs from Sheets")
 
     total_generated = 0
     now_base = datetime.now()
@@ -196,49 +214,26 @@ def generate_articles(business_id: str) -> int:
                 if not slug or slug in existing_slugs:
                     slug = f"article-{uuid.uuid4().hex[:8]}"
 
-                article_id = f"art_{uuid.uuid4().hex[:12]}"
                 # Stagger published_at (1 per hour for SEO drip)
-                published_at = (now_base + timedelta(hours=article_index)).strftime("%Y-%m-%dT%H:%M")
-                generated_at = now_base.strftime("%Y-%m-%d %H:%M")
+                published_at = (now_base + timedelta(hours=article_index)).isoformat()
+                generated_at = now_base.isoformat()
 
                 tags = result.get("tags", [])
-                if isinstance(tags, list):
-                    tags_str = json.dumps(tags, ensure_ascii=False)
-                else:
-                    tags_str = str(tags)
+                if not isinstance(tags, list):
+                    tags = [str(tags)] if tags else []
 
-                # CTA is rendered by the blog UI component, not embedded in HTML
                 body_html = result.get("body_html", "")
 
-                row = [
-                    article_id,
-                    business_id,
-                    result.get("title", topic),
-                    slug,
-                    body_html,
-                    result.get("excerpt", ""),
-                    cat_info["label"],
-                    tags_str,
-                    result.get("meta_description", ""),
-                    result.get("og_title", result.get("title", topic)),
-                    result.get("og_description", result.get("meta_description", "")),
-                    "published",
-                    published_at,
-                    generated_at,
-                ]
-                append_rows("blog_articles", [row])
-                existing_slugs.add(slug)
-
-                # Upload to GCS
-                article_data = {
-                    "article_id": article_id,
+                # --- Supabase (primary) ---
+                post_data = {
                     "business_id": business_id,
+                    "media_id": media_id,
                     "title": result.get("title", topic),
                     "slug": slug,
                     "body_html": body_html,
                     "excerpt": result.get("excerpt", ""),
                     "category": cat_info["label"],
-                    "tags": tags if isinstance(tags, list) else [],
+                    "tags": tags,
                     "meta_description": result.get("meta_description", ""),
                     "og_title": result.get("og_title", result.get("title", topic)),
                     "og_description": result.get("og_description", ""),
@@ -246,10 +241,33 @@ def generate_articles(business_id: str) -> int:
                     "published_at": published_at,
                     "generated_at": generated_at,
                 }
-                gcs_upload(f"blog_articles/{slug}.json", article_data)
 
+                supabase_ok = _try_supabase_upsert(post_data)
+
+                # --- Sheets fallback ---
+                if not supabase_ok:
+                    article_id = f"art_{uuid.uuid4().hex[:12]}"
+                    tags_str = json.dumps(tags, ensure_ascii=False)
+                    row = [
+                        article_id, business_id,
+                        result.get("title", topic), slug, body_html,
+                        result.get("excerpt", ""), cat_info["label"], tags_str,
+                        result.get("meta_description", ""),
+                        result.get("og_title", result.get("title", topic)),
+                        result.get("og_description", ""),
+                        "published", published_at, generated_at,
+                    ]
+                    append_rows("blog_articles", [row])
+
+                # --- GCS backup ---
+                try:
+                    gcs_upload(f"blog_articles/{slug}.json", post_data)
+                except Exception as e:
+                    logger.warning(f"GCS upload failed for {slug}: {e}")
+
+                existing_slugs.add(slug)
                 total_generated += 1
-                logger.info(f"  → Generated: {result.get('title', topic)[:40]}")
+                logger.info(f"  → Generated: {result.get('title', topic)[:40]} ({'supabase' if supabase_ok else 'sheets'})")
 
             except Exception as e:
                 logger.error(f"Failed to generate article '{topic[:30]}': {e}")
@@ -262,11 +280,12 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate blog articles")
     parser.add_argument("--business-id", required=True, help="Target business ID (market name)")
+    parser.add_argument("--media-id", default=DEFAULT_MEDIA_ID, help="Media ID (default: shokunin-san)")
     args = parser.parse_args()
 
-    logger.info(f"=== Blog generator start: {args.business_id} ===")
+    logger.info(f"=== Blog generator start: {args.business_id} (media: {args.media_id}) ===")
 
-    total = generate_articles(business_id=args.business_id)
+    total = generate_articles(business_id=args.business_id, media_id=args.media_id)
 
     logger.info(f"=== Blog generator complete: {total} articles generated ===")
     if total > 0:

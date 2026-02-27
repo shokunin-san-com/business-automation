@@ -254,6 +254,69 @@ def update_cell_by_key(
 
 
 @_retry_on_rate_limit
+def batch_update_by_key(
+    sheet_name: str,
+    key_column: str,
+    key_value: str,
+    updates: dict[str, Any],
+) -> bool:
+    """Update multiple columns in one row matching key_column == key_value.
+
+    Uses a single batch_update API call instead of N individual calls.
+    Only 2 API reads (headers + key column) + 1 write = 3 total,
+    regardless of how many columns are updated.
+
+    Args:
+        sheet_name: Sheet tab name
+        key_column: Column to search in
+        key_value: Value to match
+        updates: Dict of {column_name: new_value} pairs
+
+    Returns True if updated, False if not found.
+    """
+    ws = get_worksheet(sheet_name)
+    headers = ws.row_values(1)
+
+    if key_column not in headers:
+        logger.warning(f"Key column '{key_column}' not found in {sheet_name}")
+        return False
+
+    # Validate all target columns exist
+    for col in updates:
+        if col not in headers:
+            logger.warning(f"Target column '{col}' not found in {sheet_name}")
+            return False
+
+    key_col_idx = headers.index(key_column) + 1
+    col_values = ws.col_values(key_col_idx)
+
+    row_idx = None
+    for i, v in enumerate(col_values):
+        if i == 0:
+            continue
+        if v == key_value:
+            row_idx = i + 1  # 1-indexed
+            break
+
+    if row_idx is None:
+        logger.warning(f"No row in {sheet_name} where {key_column}={key_value}")
+        return False
+
+    # Build batch update cells list
+    cells = []
+    for col_name, value in updates.items():
+        col_idx = headers.index(col_name) + 1
+        cell = gspread.Cell(row=row_idx, col=col_idx, value=value)
+        cells.append(cell)
+
+    if cells:
+        ws.update_cells(cells, value_input_option="USER_ENTERED")
+        logger.info(f"Batch updated {len(cells)} cells in row {row_idx} of {sheet_name}")
+
+    return True
+
+
+@_retry_on_rate_limit
 def find_row_index(sheet_name: str, column_name: str, value: str) -> int | None:
     """Find the 1-indexed row number where column_name == value.
 
