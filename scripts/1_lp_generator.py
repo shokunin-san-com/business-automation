@@ -22,7 +22,7 @@ from config import (
     YOUR_EMAIL,
     get_logger,
 )
-from utils.claude_client import generate_json
+from utils.claude_client import generate_json_with_retry
 from utils.sheets_client import (
     get_all_rows,
     append_row,
@@ -54,29 +54,32 @@ def _get_ready_markets() -> list[dict]:
     if not ready_run_ids:
         return []
 
-    # Check which run_ids already have LP content
+    # Check which IDs already have LP content (business_id column may be run_id or market name)
     try:
         existing_lp = get_all_rows("lp_content")
-        existing_ids = {r.get("business_id", r.get("run_id", "")) for r in existing_lp}
+        existing_ids = set()
+        for r in existing_lp:
+            existing_ids.add(r.get("business_id", ""))
+            existing_ids.add(r.get("run_id", ""))
     except Exception:
         existing_ids = set()
 
     # Also check local files
     for rid in list(ready_run_ids):
         json_path = LP_CONTENT_DIR / f"{rid}.json"
-        if json_path.exists() or rid in existing_ids:
-            ready_run_ids.discard(rid)
+        if json_path.exists():
+            existing_ids.add(rid)
 
     if not ready_run_ids:
         return []
 
-    # Get market details from gate_decision_log
+    # Get PASS gates from gate_decision_log (may be multiple per run_id)
     gate_rows = get_all_rows("gate_decision_log")
-    gate_by_run = {}
+    gates_by_run: dict[str, list[dict]] = {}
     for g in gate_rows:
         rid = g.get("run_id", "")
         if rid in ready_run_ids and g.get("status") == "PASS":
-            gate_by_run[rid] = g
+            gates_by_run.setdefault(rid, []).append(g)
 
     # Get offers from offer_3_log
     offer_rows = get_all_rows("offer_3_log")
@@ -94,30 +97,39 @@ def _get_ready_markets() -> list[dict]:
         if rid in ready_run_ids:
             comps_by_run.setdefault(rid, []).append(c)
 
-    # Build market entries
+    # Build market entries — one per PASS gate (not per run_id)
     markets = []
     for rid in ready_run_ids:
-        gate = gate_by_run.get(rid, {})
+        gates = gates_by_run.get(rid, [])
         offers = offers_by_run.get(rid, [])
         comps = comps_by_run.get(rid, [])
 
-        if not gate:
+        if not gates:
             continue  # No PASS gate → skip
 
-        market_name = gate.get("micro_market", rid[:8])
-        payer = gate.get("payer", "")
-        if not payer and offers:
-            payer = offers[0].get("payer", "")
+        for gate in gates:
+            market_name = gate.get("micro_market", rid[:8])
+            # Use market_name as unique LP id (run_id + market)
+            lp_id = f"{rid[:8]}_{market_name}"
 
-        markets.append({
-            "run_id": rid,
-            "name": market_name,
-            "payer": payer,
-            "evidence_urls": gate.get("evidence_urls", ""),
-            "blackout_hypothesis": gate.get("blackout_hypothesis", ""),
-            "offers": offers[:3],
-            "competitors": comps[:20],
-        })
+            # Skip if this specific market already has LP
+            if lp_id in existing_ids or market_name in existing_ids:
+                continue
+
+            payer = gate.get("payer", "")
+            if not payer and offers:
+                payer = offers[0].get("payer", "")
+
+            markets.append({
+                "run_id": rid,
+                "lp_id": lp_id,
+                "name": market_name,
+                "payer": payer,
+                "evidence_urls": gate.get("evidence_urls", ""),
+                "blackout_hypothesis": gate.get("blackout_hypothesis", ""),
+                "offers": offers[:3],
+                "competitors": comps[:20],
+            })
 
     return markets
 
@@ -166,11 +178,12 @@ def generate_lp_content(
         learning_context=learning_context,
     )
 
-    lp_data = generate_json(
+    lp_data = generate_json_with_retry(
         prompt=prompt,
         system="あなたは日本市場向けLPの専門コピーライターです。指定のJSONフォーマットで正確に出力してください。",
-        max_tokens=4096,
+        max_tokens=8192,
         temperature=0.7,
+        max_retries=3,
     )
 
     # Ensure we got a dict back
@@ -246,19 +259,22 @@ def main():
         generated_count = 0
         for market in ready_markets:
             rid = market["run_id"]
+            market_name = market["name"]
+            # Use market name as business_id (LP URL slug)
+            business_id = market_name
             try:
-                update_status("1_lp_generator", "running", f"LP生成中: {market['name']}")
-                logger.info(f"Generating LP for: {market['name']} ({rid[:8]})")
+                update_status("1_lp_generator", "running", f"LP生成中: {market_name}")
+                logger.info(f"Generating LP for: {market_name} ({rid[:8]})")
                 lp_data = generate_lp_content(
                     market,
                     knowledge_context=knowledge_context,
                     learning_context=learning_context,
                 )
-                save_lp_content(rid, lp_data)
-                record_to_sheets(rid, lp_data)
+                save_lp_content(business_id, lp_data)
+                record_to_sheets(business_id, lp_data)
                 generated_count += 1
             except Exception as e:
-                logger.error(f"Failed to generate LP for {rid[:8]}: {e}", exc_info=True)
+                logger.error(f"Failed to generate LP for {market_name}: {e}", exc_info=True)
                 continue
 
         if generated_count > 0:
