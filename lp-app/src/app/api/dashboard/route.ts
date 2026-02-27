@@ -111,26 +111,43 @@ export async function GET() {
     } catch { /* sheet may not exist yet */ }
 
     // --- Pending offers from offer_3_log (V2: replaces business_ideas) ---
+    // Only show READY runs that haven't been approved/rejected yet
     let pendingIdeas: PendingIdea[] = [];
     try {
-      const offers = await cachedGetAllRows("offer_3_log");
-      // Show latest offers as "pending ideas" for dashboard display
-      const uniqueRuns = new Map<string, typeof offers[0]>();
-      for (const row of offers) {
-        if (row.run_id && !uniqueRuns.has(row.run_id)) {
-          uniqueRuns.set(row.run_id, row);
+      const lpReady = await cachedGetAllRows("lp_ready_log").catch(() => [] as Record<string, string>[]);
+      const readyRunIds = new Set(
+        lpReady.filter((r) => r.status === "READY").map((r) => r.run_id),
+      );
+
+      // Exclude runs already approved or rejected
+      const rejectRows = await cachedGetAllRows("ceo_reject_log").catch(() => [] as Record<string, string>[]);
+      const decidedRunIds = new Set(
+        rejectRows
+          .filter((r) => r.type === "run_approve" || r.type === "run_reject")
+          .map((r) => r.run_id),
+      );
+
+      const pendingRunIds = [...readyRunIds].filter((rid) => !decidedRunIds.has(rid));
+
+      if (pendingRunIds.length > 0) {
+        const offers = await cachedGetAllRows("offer_3_log");
+        const gateRows = await cachedGetAllRows("gate_decision_log");
+
+        for (const rid of pendingRunIds.slice(-5)) {
+          const offer = offers.find((o) => o.run_id === rid);
+          const gate = gateRows.find((g) => g.run_id === rid && g.status === "PASS");
+          if (offer || gate) {
+            pendingIdeas.push({
+              id: rid,
+              name: gate?.micro_market || offer?.offer_name || rid.slice(0, 8),
+              category: offer?.payer || gate?.payer || "",
+              description: offer?.deliverable || gate?.blackout_hypothesis || "",
+              target_audience: offer?.payer || gate?.payer || "",
+              created_at: "",
+            });
+          }
         }
       }
-      pendingIdeas = Array.from(uniqueRuns.values())
-        .slice(-5)
-        .map((row) => ({
-          id: row.run_id || "",
-          name: row.offer_name || "",
-          category: row.payer || "",
-          description: row.deliverable || "",
-          target_audience: row.payer || "",
-          created_at: "",
-        }));
     } catch { /* sheet may not exist yet */ }
 
     // --- Scheduler status from Cloud Scheduler API ---

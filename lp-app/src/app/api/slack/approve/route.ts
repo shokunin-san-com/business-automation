@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateCell, getAllRows } from "@/lib/sheets";
+import { getAllRows, appendRows } from "@/lib/sheets";
 
 /**
  * POST /api/slack/approve
- * Body: { idea_id: string, action: "approve" | "reject", user?: string }
+ * Body: { idea_id: string (run_id), action: "approve" | "reject", user?: string }
+ *
+ * V2: Records decision in ceo_reject_log sheet.
+ *   - approve → type "run_approve"
+ *   - reject  → type "run_reject"
  *
  * Called from:
  *   1. Dashboard UI buttons
- *   2. Slack Interactive Message callback (forwarded from /api/slack/interactive)
- *
- * Updates the business_ideas sheet directly via Google Sheets API.
- * No more Python child_process.exec!
+ *   2. Slack Interactive Message callback
  */
 export async function POST(request: NextRequest) {
   try {
@@ -25,27 +26,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "idea_id and action required" }, { status: 400 });
     }
 
-    const newStatus = action === "approve" ? "active" : "archived";
-    const actionLabel = action === "approve" ? "\u627F\u8A8D" : "\u5374\u4E0B";
+    const actionLabel = action === "approve" ? "承認" : "却下";
     const actor = user || "dashboard";
+    const now = new Date().toISOString().slice(0, 16).replace("T", " ");
 
-    // Update business_ideas sheet: set status column
+    // V2: Record to ceo_reject_log (used for both approve and reject)
+    const logType = action === "approve" ? "run_approve" : "run_reject";
     try {
-      await updateCell("business_ideas", "id", idea_id, "status", newStatus);
+      await appendRows("ceo_reject_log", [
+        [idea_id, logType, "", actionLabel, actor, now],
+      ]);
     } catch (err) {
-      console.error("Failed to update Sheets:", err);
-      // Continue anyway — best effort
+      console.error("Failed to write ceo_reject_log:", err);
     }
 
-    // Look up idea name for the Slack notification
-    let ideaName = idea_id;
+    // Look up offer name for Slack notification
+    let ideaName = idea_id.slice(0, 8);
     try {
-      const ideas = await getAllRows("business_ideas");
-      const idea = ideas.find((i) => i.id === idea_id);
-      if (idea?.name) ideaName = idea.name;
+      const offers = await getAllRows("offer_3_log");
+      const offer = offers.find((o) => o.run_id === idea_id);
+      if (offer?.offer_name) ideaName = offer.offer_name;
     } catch { /* ignore */ }
 
-    // Send Slack notification about the decision
+    // Send Slack notification
     try {
       const webhookUrl = process.env.SLACK_WEBHOOK_URL;
       if (webhookUrl) {
@@ -54,7 +57,7 @@ export async function POST(request: NextRequest) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text: `${emoji} \u4E8B\u696D\u6848 *${ideaName}* \u304C *${actionLabel}* \u3055\u308C\u307E\u3057\u305F\u3002\n\u64CD\u4F5C\u8005: ${actor}`,
+            text: `${emoji} 事業案 *${ideaName}* (run: \`${idea_id.slice(0, 8)}\`) が *${actionLabel}* されました。\n操作者: ${actor}`,
           }),
         });
       }
@@ -66,7 +69,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       idea_id,
       action,
-      message: `Idea ${idea_id} ${actionLabel}`,
+      message: `Run ${idea_id.slice(0, 8)} ${actionLabel}`,
     });
   } catch (err) {
     console.error("Approve error:", err);
