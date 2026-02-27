@@ -12,7 +12,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import get_logger
-from utils.sheets_client import get_all_rows, update_cell
+from utils.sheets_client import get_all_rows, update_cell_by_key as update_cell
 from utils.twitter_client import post_tweet
 from utils.linkedin_client import post_text as post_linkedin
 from utils.risk_scorer import evaluate as evaluate_risk

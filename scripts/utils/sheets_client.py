@@ -220,6 +220,40 @@ def update_cell(sheet_name: str, row: int, col: int, value: Any) -> None:
 
 
 @_retry_on_rate_limit
+def update_cell_by_key(
+    sheet_name: str,
+    key_column: str,
+    key_value: str,
+    target_column: str,
+    target_value: Any,
+) -> bool:
+    """Update a cell by looking up a row where key_column == key_value.
+
+    Sets target_column to target_value in the matching row.
+    Returns True if the cell was updated, False if no match found.
+    """
+    ws = get_worksheet(sheet_name)
+    headers = ws.row_values(1)
+    if key_column not in headers or target_column not in headers:
+        logger.warning(f"Column not found: {key_column} or {target_column} in {sheet_name}")
+        return False
+
+    key_col_idx = headers.index(key_column) + 1
+    target_col_idx = headers.index(target_column) + 1
+
+    col_values = ws.col_values(key_col_idx)
+    for i, v in enumerate(col_values):
+        if i == 0:
+            continue  # skip header
+        if v == key_value:
+            ws.update_cell(i + 1, target_col_idx, target_value)
+            return True
+
+    logger.warning(f"No row found in {sheet_name} where {key_column}={key_value}")
+    return False
+
+
+@_retry_on_rate_limit
 def find_row_index(sheet_name: str, column_name: str, value: str) -> int | None:
     """Find the 1-indexed row number where column_name == value.
 
