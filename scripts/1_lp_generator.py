@@ -1,7 +1,8 @@
 """
-1_lp_generator.py — Generate LP content for active business ideas.
+1_lp_generator.py — V2: Generate LP content for READY markets.
 
-Reads active ideas from Google Sheets, generates LP content via Claude API,
+Reads READY markets from lp_ready_log, joins with gate_decision_log /
+offer_3_log / competitor_20_log, generates LP content via Gemini,
 saves JSON files to data/lp_content/ and records in Sheets.
 """
 
@@ -23,11 +24,9 @@ from config import (
 )
 from utils.claude_client import generate_json
 from utils.sheets_client import (
-    get_rows_by_status,
     get_all_rows,
     append_row,
-    find_row_index,
-    update_cell,
+    append_rows,
 )
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
@@ -40,25 +39,126 @@ logger = get_logger("lp_generator", "lp_generator.log")
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
 
-def _already_generated(business_id: str) -> bool:
-    """Check if LP content already exists for this business idea."""
-    json_path = LP_CONTENT_DIR / f"{business_id}.json"
-    if json_path.exists():
-        return True
-    existing = get_all_rows("lp_content")
-    return any(r.get("business_id") == business_id for r in existing)
+def _get_ready_markets() -> list[dict]:
+    """Get READY markets from V2 sheets that don't already have LP content.
+
+    Joins: lp_ready_log (READY) + gate_decision_log (PASS) + offer_3_log + competitor_20_log.
+    Excludes markets that already have lp_content records.
+    """
+    lp_rows = get_all_rows("lp_ready_log")
+    ready_run_ids = {
+        r["run_id"] for r in lp_rows
+        if r.get("status") == "READY" and r.get("run_id")
+    }
+
+    if not ready_run_ids:
+        return []
+
+    # Check which run_ids already have LP content
+    try:
+        existing_lp = get_all_rows("lp_content")
+        existing_ids = {r.get("business_id", r.get("run_id", "")) for r in existing_lp}
+    except Exception:
+        existing_ids = set()
+
+    # Also check local files
+    for rid in list(ready_run_ids):
+        json_path = LP_CONTENT_DIR / f"{rid}.json"
+        if json_path.exists() or rid in existing_ids:
+            ready_run_ids.discard(rid)
+
+    if not ready_run_ids:
+        return []
+
+    # Get market details from gate_decision_log
+    gate_rows = get_all_rows("gate_decision_log")
+    gate_by_run = {}
+    for g in gate_rows:
+        rid = g.get("run_id", "")
+        if rid in ready_run_ids and g.get("status") == "PASS":
+            gate_by_run[rid] = g
+
+    # Get offers from offer_3_log
+    offer_rows = get_all_rows("offer_3_log")
+    offers_by_run: dict[str, list[dict]] = {}
+    for o in offer_rows:
+        rid = o.get("run_id", "")
+        if rid in ready_run_ids:
+            offers_by_run.setdefault(rid, []).append(o)
+
+    # Get competitor gaps from competitor_20_log
+    comp_rows = get_all_rows("competitor_20_log")
+    comps_by_run: dict[str, list[dict]] = {}
+    for c in comp_rows:
+        rid = c.get("run_id", "")
+        if rid in ready_run_ids:
+            comps_by_run.setdefault(rid, []).append(c)
+
+    # Build market entries
+    markets = []
+    for rid in ready_run_ids:
+        gate = gate_by_run.get(rid, {})
+        offers = offers_by_run.get(rid, [])
+        comps = comps_by_run.get(rid, [])
+
+        if not gate:
+            continue  # No PASS gate → skip
+
+        market_name = gate.get("micro_market", rid[:8])
+        payer = gate.get("payer", "")
+        if not payer and offers:
+            payer = offers[0].get("payer", "")
+
+        markets.append({
+            "run_id": rid,
+            "name": market_name,
+            "payer": payer,
+            "evidence_urls": gate.get("evidence_urls", ""),
+            "blackout_hypothesis": gate.get("blackout_hypothesis", ""),
+            "offers": offers[:3],
+            "competitors": comps[:20],
+        })
+
+    return markets
 
 
-def generate_lp_content(idea: dict, knowledge_context: str = "", learning_context: str = "") -> dict:
-    """Generate LP content for a single business idea via Claude."""
+def generate_lp_content(
+    market: dict,
+    knowledge_context: str = "",
+    learning_context: str = "",
+) -> dict:
+    """Generate LP content for a V2 market via Gemini."""
+    # Format offers
+    offers_text = ""
+    for i, o in enumerate(market.get("offers", []), 1):
+        offers_text += (
+            f"  {i}. {o.get('offer_name', '不明')}"
+            f" — {o.get('deliverable', '')} / {o.get('price', '')}\n"
+            f"     即効性: {o.get('time_to_value', '')} / 代替: {o.get('replaces', '')}\n"
+        )
+
+    # Format competitor gaps (top 5)
+    gaps_text = ""
+    seen_companies = set()
+    for c in market.get("competitors", []):
+        company = c.get("company_name", "")
+        if company in seen_companies:
+            continue
+        seen_companies.add(company)
+        gap = c.get("gap", c.get("weakness", ""))
+        if gap:
+            gaps_text += f"  - {company}: {gap}\n"
+        if len(seen_companies) >= 5:
+            break
+
     template = jinja_env.get_template("lp_prompt.j2")
     prompt = template.render(
-        name=idea["name"],
-        category=idea.get("category", ""),
-        description=idea.get("description", ""),
-        target_audience=idea.get("target_audience", ""),
-        market_size=idea.get("market_size", ""),
-        differentiator=idea.get("differentiator", ""),
+        name=market["name"],
+        payer=market.get("payer", ""),
+        offers_text=offers_text,
+        gaps_text=gaps_text,
+        evidence_urls=market.get("evidence_urls", ""),
+        blackout_hypothesis=market.get("blackout_hypothesis", ""),
         company_name=YOUR_COMPANY_NAME,
         your_name=YOUR_NAME,
         your_email=YOUR_EMAIL,
@@ -73,44 +173,43 @@ def generate_lp_content(idea: dict, knowledge_context: str = "", learning_contex
         temperature=0.7,
     )
 
-    # Ensure we got a dict back (not a list or empty)
+    # Ensure we got a dict back
     if isinstance(lp_data, list):
         if len(lp_data) > 0 and isinstance(lp_data[0], dict):
             lp_data = lp_data[0]
         else:
-            raise ValueError(f"AI returned a list instead of dict for LP content: {str(lp_data)[:200]}")
+            raise ValueError(f"AI returned a list instead of dict: {str(lp_data)[:200]}")
     if not isinstance(lp_data, dict):
-        raise ValueError(f"AI returned unexpected type {type(lp_data).__name__} for LP content")
+        raise ValueError(f"AI returned unexpected type {type(lp_data).__name__}")
 
-    # Add metadata
-    lp_data["id"] = idea["id"]
-    lp_data["name"] = idea["name"]
-    lp_data["category"] = idea.get("category", "")
-    lp_data["target_audience"] = idea.get("target_audience", "")
+    # Add V2 metadata
+    lp_data["id"] = market["run_id"]
+    lp_data["name"] = market["name"]
+    lp_data["payer"] = market.get("payer", "")
 
     return lp_data
 
 
-def save_lp_content(business_id: str, lp_data: dict) -> Path:
+def save_lp_content(run_id: str, lp_data: dict) -> Path:
     """Save LP content JSON to data/lp_content/ and upload to GCS."""
-    json_path = LP_CONTENT_DIR / f"{business_id}.json"
+    json_path = LP_CONTENT_DIR / f"{run_id}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(lp_data, f, ensure_ascii=False, indent=2)
     logger.info(f"LP content saved: {json_path}")
 
     # Upload to GCS for cloud access
-    gcs_url = gcs_upload(f"lp_content/{business_id}.json", lp_data)
+    gcs_url = gcs_upload(f"lp_content/{run_id}.json", lp_data)
     if gcs_url:
         logger.info(f"LP content uploaded to GCS: {gcs_url}")
 
     return json_path
 
 
-def record_to_sheets(business_id: str, lp_data: dict) -> None:
+def record_to_sheets(run_id: str, lp_data: dict) -> None:
     """Write LP content summary to lp_content sheet."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     row = [
-        business_id,
+        run_id,
         lp_data.get("headline", ""),
         lp_data.get("subheadline", ""),
         json.dumps(lp_data.get("sections", []), ensure_ascii=False),
@@ -121,47 +220,45 @@ def record_to_sheets(business_id: str, lp_data: dict) -> None:
         now,
     ]
     append_row("lp_content", row)
-
-    # Update lp_url in business_ideas
-    row_idx = find_row_index("business_ideas", "id", business_id)
-    if row_idx:
-        update_cell("business_ideas", row_idx, 7, f"/lp/{business_id}")
-    logger.info(f"LP content recorded to Sheets for {business_id}")
+    logger.info(f"LP content recorded to Sheets for {run_id}")
 
 
 def main():
-    logger.info("=== LP generator start ===")
+    logger.info("=== LP generator start (V2) ===")
     update_status("1_lp_generator", "running", "LP生成チェック中...")
 
     try:
-        active_ideas = get_rows_by_status("business_ideas", "active")
-        if not active_ideas:
-            logger.info("No active business ideas found. Exiting.")
+        # V2: Get READY markets that don't have LP content yet
+        ready_markets = _get_ready_markets()
+        if not ready_markets:
+            logger.info("No READY markets without LP content. Exiting.")
             update_status("1_lp_generator", "success", "対象なし", {"lps_generated": 0})
             return
+
+        logger.info(f"Found {len(ready_markets)} READY markets for LP generation")
 
         # Load knowledge context once for all LP generation
         knowledge_context = get_knowledge_summary()
 
-        # Load learning context (AI insights + human directives)
+        # Load learning context
         learning_context = get_learning_context(categories=["lp_optimization"])
 
         generated_count = 0
-        for idea in active_ideas:
-            bid = idea["id"]
-            if _already_generated(bid):
-                logger.info(f"LP already generated for {bid}, skipping")
-                continue
-
+        for market in ready_markets:
+            rid = market["run_id"]
             try:
-                update_status("1_lp_generator", "running", f"LP生成中: {idea['name']}")
-                logger.info(f"Generating LP for: {idea['name']} ({bid})")
-                lp_data = generate_lp_content(idea, knowledge_context=knowledge_context, learning_context=learning_context)
-                save_lp_content(bid, lp_data)
-                record_to_sheets(bid, lp_data)
+                update_status("1_lp_generator", "running", f"LP生成中: {market['name']}")
+                logger.info(f"Generating LP for: {market['name']} ({rid[:8]})")
+                lp_data = generate_lp_content(
+                    market,
+                    knowledge_context=knowledge_context,
+                    learning_context=learning_context,
+                )
+                save_lp_content(rid, lp_data)
+                record_to_sheets(rid, lp_data)
                 generated_count += 1
             except Exception as e:
-                logger.error(f"Failed to generate LP for {bid}: {e}", exc_info=True)
+                logger.error(f"Failed to generate LP for {rid[:8]}: {e}", exc_info=True)
                 continue
 
         if generated_count > 0:

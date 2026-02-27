@@ -40,11 +40,18 @@ export async function getLPData(slug: string): Promise<LPData | null> {
     const row = rows.find((r) => r.business_id === decodedSlug);
     if (!row) return null;
 
-    // Also get the business_ideas row for name/category/target_audience
+    // V2: Get market info from gate_decision_log instead of deleted business_ideas
     let ideaRow: Record<string, string> | undefined;
     try {
-      const ideas = await getAllRows("business_ideas");
-      ideaRow = ideas.find((i) => i.id === decodedSlug);
+      const gates = await getAllRows("gate_decision_log");
+      const gate = gates.find((g) => g.run_id === decodedSlug && g.status === "PASS");
+      if (gate) {
+        ideaRow = {
+          name: gate.micro_market || "",
+          category: gate.payer || "",
+          target_audience: gate.payer || "",
+        };
+      }
     } catch { /* ignore */ }
 
     let sections = [];

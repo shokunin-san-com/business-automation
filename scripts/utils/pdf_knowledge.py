@@ -93,23 +93,24 @@ JSON以外のテキストは含めないでください。
 
 def _extract_with_gemini(pdf_path: str) -> dict:
     """Extract knowledge using Gemini API (handles large PDFs via File API)."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
     file_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
     logger.info(f"Sending PDF to Gemini for analysis: {Path(pdf_path).name} ({file_size_mb:.1f} MB)")
 
     # Use Gemini File API for upload (supports large files)
-    uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
+    uploaded_file = client.files.upload(file=pdf_path)
     logger.info(f"Gemini file uploaded: {uploaded_file.name}")
 
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    model = genai.GenerativeModel(model_name)
 
-    response = model.generate_content(
-        [uploaded_file, EXTRACTION_PROMPT],
-        generation_config=genai.GenerationConfig(max_output_tokens=8192),
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[uploaded_file, EXTRACTION_PROMPT],
+        config=types.GenerateContentConfig(max_output_tokens=8192),
     )
 
     raw = response.text.strip()

@@ -1,9 +1,14 @@
 """
-3_form_sales.py — Automated form-based outreach.
+3_form_sales.py — V2: Automated form-based outreach.
+
+Data sources (V2):
+  - lp_ready_log (READY) → active markets
+  - gate_decision_log (PASS) → market details
+  - offer_3_log → offers per market
 
 Pipeline:
 1. Scrape target companies (or read from Sheets)
-2. Generate personalized sales messages via Claude API
+2. Generate personalized sales messages via Gemini
 3. Submit via Playwright (with dry-run mode)
 4. Record results to Google Sheets
 """
@@ -27,7 +32,6 @@ from config import (
 )
 from utils.claude_client import generate_text
 from utils.sheets_client import (
-    get_rows_by_status,
     get_all_rows,
     append_row,
     find_row_index,
@@ -39,6 +43,7 @@ from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.risk_scorer import evaluate as evaluate_risk
 from utils.learning_engine import get_learning_context
+from utils.v2_markets import get_active_v2_markets
 
 logger = get_logger("form_sales", "form_sales.log")
 
@@ -262,9 +267,10 @@ def main():
         settings = _load_settings()
         daily_limit = int(settings.get("form_sales_per_day", "5"))
 
-        active_ideas = get_rows_by_status("business_ideas", "active")
+        # V2: Read active markets from lp_ready_log + gate_decision_log
+        active_ideas = get_active_v2_markets()
         if not active_ideas:
-            logger.info("No active ideas. Exiting.")
+            logger.info("No active V2 markets. Exiting.")
             update_status("3_form_sales", "success", "対象なし", {"submitted": 0})
             return
 

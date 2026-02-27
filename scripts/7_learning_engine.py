@@ -23,7 +23,7 @@ from utils.learning_engine import (
 )
 from utils.downstream_metrics import aggregate_daily_downstream, get_latest_downstream_kpis
 from utils.claude_client import generate_json
-from utils.sheets_client import get_rows_by_status, get_all_rows
+from utils.sheets_client import get_all_rows
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 

@@ -1,5 +1,10 @@
 """
-2_sns_poster.py — Auto-post to X (Twitter) and LinkedIn for active business ideas.
+2_sns_poster.py — V2: Auto-post to X (Twitter) and LinkedIn for active markets.
+
+Data sources (V2):
+  - lp_ready_log (READY) → active markets
+  - gate_decision_log (PASS) → market details
+  - offer_3_log → offers per market
 
 Risk scoring flow:
   score <= 30 → AUTO post
@@ -19,13 +24,14 @@ from jinja2 import Environment, FileSystemLoader
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import TEMPLATES_DIR, get_logger
 from utils.claude_client import generate_json
-from utils.sheets_client import get_rows_by_status, get_all_rows, append_row
+from utils.sheets_client import get_all_rows, append_row
 from utils.twitter_client import post_tweet
 from utils.linkedin_client import post_text as post_linkedin
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
 from utils.risk_scorer import evaluate as evaluate_risk
 from utils.learning_engine import get_learning_context
+from utils.v2_markets import get_active_v2_markets
 
 logger = get_logger("sns_poster", "sns_poster.log")
 
@@ -176,9 +182,10 @@ def main():
             update_status("2_sns_poster", "success", f"配信ガード: {guard_reason}")
             return
 
-        active_ideas = get_rows_by_status("business_ideas", "active")
+        # V2: Read active markets from lp_ready_log + gate_decision_log
+        active_ideas = get_active_v2_markets()
         if not active_ideas:
-            logger.info("No active ideas. Exiting.")
+            logger.info("No active V2 markets. Exiting.")
             update_status("2_sns_poster", "success", "対象なし", {"posts": 0})
             return
 

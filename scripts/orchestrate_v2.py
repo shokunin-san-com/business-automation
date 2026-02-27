@@ -203,6 +203,8 @@ def send_pipeline_report(
     run_id: str,
     lp_check: dict,
     total_duration: str,
+    passed_market_count: int = 0,
+    offer_count: int = 0,
 ):
     """Send a comprehensive pipeline report to Slack."""
     try:
@@ -254,6 +256,19 @@ def send_pipeline_report(
         if lp_check.get("is_exploration_only"):
             lines.append("")
             lines.append("📋 *次のアクション:* 探索レーン市場のヒアリングで証拠を収集し、再度パイプラインを実行してください")
+
+    # CEO review notification
+    ceo_items = []
+    if passed_market_count > 1:
+        ceo_items.append(f"• PASS市場が{passed_market_count}件あります。却下して1つに絞ってください。")
+    if offer_count > 1:
+        ceo_items.append(f"• オファーが{offer_count}案あります。却下して絞ってください。")
+    if ceo_items and lp_status == "READY":
+        lines.append("")
+        lines.append("👔 *CEO承認が必要です*")
+        for item in ceo_items:
+            lines.append(f"    {item}")
+        lines.append("    → ダッシュボードから却下操作を行ってください。")
 
     # Spreadsheet link
     from config import GOOGLE_SHEETS_ID
@@ -445,48 +460,52 @@ def main():
         # ===================================================================
         logger.info("=" * 40 + " A1q: 浅いゲート")
         update_status("orchestrate_v2", "running", f"A1q: {len(micro_markets)}市場をゲート判定中...")
+        a1q_passed = []
         try:
             a1q_passed, a1q_all = step_a1_quick_gate(micro_markets, knowledge_context, run_id)
             if not a1q_passed:
                 steps.append(_make_step_result("A1q: 浅いゲート", STEP_FAIL,
                                                count=0,
                                                errors=[f"全{len(micro_markets)}市場FAIL"]))
-                _abort_pipeline(steps, run_id, start_time)
-                return
-            steps.append(_make_step_result("A1q: 浅いゲート", STEP_OK,
-                                           count=len(a1q_passed),
-                                           data=a1q_passed))
+            else:
+                steps.append(_make_step_result("A1q: 浅いゲート", STEP_OK,
+                                               count=len(a1q_passed),
+                                               data=a1q_passed))
         except Exception as e:
+            logger.error(f"A1q exception (continuing): {e}")
             steps.append(_make_step_result("A1q: 浅いゲート", STEP_FAIL,
                                            errors=[str(e)]))
-            _abort_pipeline(steps, run_id, start_time)
-            return
 
         # ===================================================================
         # A1d: Deep gate (max 5 markets)
         # ===================================================================
-        logger.info("=" * 40 + " A1d: 深いゲート")
-        update_status("orchestrate_v2", "running", f"A1d: {len(a1q_passed[:5])}市場を深いゲート判定中...")
-        try:
-            a1d_results, gate_log = step_a1_deep_gate(
-                a1q_passed, settings, knowledge_context, run_id
-            )
-            passed_markets = [r for r in a1d_results if r.get("status") == "PASS"]
-            failed_markets = [r for r in a1d_results if r.get("status") != "PASS"]
+        passed_markets = []
+        failed_markets = []
+        if a1q_passed:
+            logger.info("=" * 40 + " A1d: 深いゲート")
+            update_status("orchestrate_v2", "running", f"A1d: {len(a1q_passed[:5])}市場を深いゲート判定中...")
+            try:
+                a1d_results, gate_log = step_a1_deep_gate(
+                    a1q_passed, settings, knowledge_context, run_id
+                )
+                passed_markets = [r for r in a1d_results if r.get("status") == "PASS"]
+                failed_markets = [r for r in a1d_results if r.get("status") != "PASS"]
 
-            if passed_markets:
-                steps.append(_make_step_result("A1d: 深いゲート", STEP_OK,
-                                               count=len(passed_markets),
-                                               data=passed_markets))
-            else:
-                steps.append(_make_step_result("A1d: 深いゲート", STEP_WARN,
-                                               count=0,
-                                               warnings=[f"全{len(a1q_passed[:5])}市場FAIL — 探索レーン確認中"]))
-        except Exception as e:
-            steps.append(_make_step_result("A1d: 深いゲート", STEP_FAIL,
-                                           errors=[str(e)]))
-            _abort_pipeline(steps, run_id, start_time)
-            return
+                if passed_markets:
+                    steps.append(_make_step_result("A1d: 深いゲート", STEP_OK,
+                                                   count=len(passed_markets),
+                                                   data=passed_markets))
+                else:
+                    steps.append(_make_step_result("A1d: 深いゲート", STEP_WARN,
+                                                   count=0,
+                                                   warnings=[f"全{len(a1q_passed[:5])}市場FAIL — 探索レーン確認中"]))
+            except Exception as e:
+                logger.error(f"A1d exception (continuing): {e}")
+                steps.append(_make_step_result("A1d: 深いゲート", STEP_FAIL,
+                                               errors=[str(e)]))
+        else:
+            steps.append(_make_step_result("A1d: 深いゲート", STEP_SKIP,
+                                           warnings=["A1q PASS市場0件"]))
 
         # ===================================================================
         # EX: Exploration lane check
@@ -518,134 +537,144 @@ def main():
 
         if not active_market:
             steps.append(_make_step_result("判定", STEP_FAIL,
-                                           errors=["PASS市場0件 + 探索レーン0件 → 続行不可"]))
-            _abort_pipeline(steps, run_id, start_time)
-            return
-
-        active_market_name = active_market.get("micro_market", "unknown")
+                                           errors=["PASS市場0件 + 探索レーン0件 → C/0/LPスキップ"]))
+            # Skip C/0/LP but still send final report (no abort)
+            active_market_name = "N/A"
+        else:
+            active_market_name = active_market.get("micro_market", "unknown")
         logger.info(f"Active market: {active_market_name}")
 
         # ===================================================================
         # C: Competitor analysis (20 companies)
         # ===================================================================
-        logger.info("=" * 40 + f" C: 競合20社分析 ({active_market_name})")
-        update_status("orchestrate_v2", "running", f"C: {active_market_name} 競合20社分析中...")
-
+        gap_top3 = []
         gate_result = {}
-        try:
-            gate_rows = get_all_rows("gate_decision_log")
-            for r in gate_rows:
-                if r.get("run_id") == run_id and r.get("micro_market") == active_market_name:
-                    gate_result = r
-                    break
-        except Exception:
-            pass
+        micro_market_data = {}
 
-        try:
-            micro_market_data = {
-                "micro_market": active_market_name,
-                "payer": gate_result.get("payer", ""),
-                "evidence_urls": gate_result.get("evidence_urls", ""),
-                "blackout_hypothesis": gate_result.get("blackout_hypothesis", ""),
-            }
+        if not active_market:
+            steps.append(_make_step_result("C: 競合20社", STEP_SKIP,
+                                           warnings=["対象市場なし"]))
+            steps.append(_make_step_result("0: オファー3案", STEP_SKIP,
+                                           warnings=["対象市場なし"]))
+        else:
+            # ---------------------------------------------------------------
+            # C: Competitor analysis (20 companies)
+            # ---------------------------------------------------------------
+            logger.info("=" * 40 + f" C: 競合20社分析 ({active_market_name})")
+            update_status("orchestrate_v2", "running", f"C: {active_market_name} 競合20社分析中...")
 
-            analysis = analyze_competitors_20(
-                micro_market_data, gate_result, knowledge_context, run_id
-            )
-            comp_count = save_competitors_to_sheets(analysis, run_id, active_market_name)
+            try:
+                gate_rows = get_all_rows("gate_decision_log")
+                for r in gate_rows:
+                    if r.get("run_id") == run_id and r.get("micro_market") == active_market_name:
+                        gate_result = r
+                        break
+            except Exception:
+                pass
 
-            gap_top3 = analysis.get("gap_top3", [])
+            try:
+                micro_market_data = {
+                    "micro_market": active_market_name,
+                    "payer": gate_result.get("payer", ""),
+                    "evidence_urls": gate_result.get("evidence_urls", ""),
+                    "blackout_hypothesis": gate_result.get("blackout_hypothesis", ""),
+                }
 
-            # Save gap_top3 for offer generation
-            gap_file = DATA_DIR / f"gap_top3_{run_id}.json"
-            gap_file.write_text(json.dumps(gap_top3, ensure_ascii=False, indent=2), "utf-8")
+                analysis = analyze_competitors_20(
+                    micro_market_data, gate_result, knowledge_context, run_id
+                )
+                comp_count = save_competitors_to_sheets(analysis, run_id, active_market_name)
 
-            if comp_count >= 10:
-                steps.append(_make_step_result("C: 競合20社", STEP_OK,
-                                               count=comp_count, data=analysis))
-            else:
-                steps.append(_make_step_result("C: 競合20社", STEP_WARN,
-                                               count=comp_count,
-                                               warnings=[f"{comp_count}社のみ（20社目標）"]))
-        except Exception as e:
-            steps.append(_make_step_result("C: 競合20社", STEP_FAIL,
-                                           errors=[str(e)]))
-            _abort_pipeline(steps, run_id, start_time)
-            return
+                gap_top3 = analysis.get("gap_top3", [])
 
-        # ===================================================================
-        # 0: Offer generation (3 offers)
-        # ===================================================================
-        logger.info("=" * 40 + " 0: 即決オファー3案生成")
-        update_status("orchestrate_v2", "running", "0: 即決オファー3案生成中...")
+                # Save gap_top3 for offer generation
+                gap_file = DATA_DIR / f"gap_top3_{run_id}.json"
+                gap_file.write_text(json.dumps(gap_top3, ensure_ascii=False, indent=2), "utf-8")
 
-        try:
-            from utils.learning_engine import get_learning_context
-            from utils.validators import validate_offer_3
+                if comp_count >= 10:
+                    steps.append(_make_step_result("C: 競合20社", STEP_OK,
+                                                   count=comp_count, data=analysis))
+                else:
+                    steps.append(_make_step_result("C: 競合20社", STEP_WARN,
+                                                   count=comp_count,
+                                                   warnings=[f"{comp_count}社のみ（20社目標）"]))
+            except Exception as e:
+                logger.error(f"C exception (continuing): {e}")
+                steps.append(_make_step_result("C: 競合20社", STEP_FAIL,
+                                               errors=[str(e)]))
 
-            learning_context = get_learning_context(categories=["idea_generation"])
+            # ---------------------------------------------------------------
+            # 0: Offer generation (3 offers)
+            # ---------------------------------------------------------------
+            logger.info("=" * 40 + " 0: 即決オファー3案生成")
+            update_status("orchestrate_v2", "running", "0: 即決オファー3案生成中...")
 
-            from jinja2 import Environment, FileSystemLoader
-            from config import TEMPLATES_DIR
-            from utils.claude_client import generate_json_with_retry
+            try:
+                from utils.learning_engine import get_learning_context
+                from utils.validators import validate_offer_3
 
-            offer_jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
-            template = offer_jinja_env.get_template("offer_3_prompt.j2")
+                learning_context = get_learning_context(categories=["idea_generation"])
 
-            prompt = template.render(
-                micro_market_json=json.dumps(micro_market_data, ensure_ascii=False),
-                gap_top3_json=json.dumps(gap_top3, ensure_ascii=False),
-                gate_result_json=json.dumps(gate_result, ensure_ascii=False),
-                knowledge_context=knowledge_context,
-                learning_context=learning_context,
-            )
+                from jinja2 import Environment, FileSystemLoader
+                from config import TEMPLATES_DIR
+                from utils.claude_client import generate_json_with_retry
 
-            offers = generate_json_with_retry(
-                prompt=prompt,
-                system=(
-                    "あなたは事業開発の専門家です。"
-                    "スコアを出すな。7つの必須フィールドを全て埋めること。"
-                    "架空の数値は禁止。必ず3案をJSON配列で出力すること。"
-                ),
-                max_tokens=8192,
-                temperature=0.5,
-                max_retries=3,
-                validator=validate_offer_3,
-            )
+                offer_jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+                template = offer_jinja_env.get_template("offer_3_prompt.j2")
 
-            if isinstance(offers, dict):
-                offers = [offers]
+                prompt = template.render(
+                    micro_market_json=json.dumps(micro_market_data, ensure_ascii=False),
+                    gap_top3_json=json.dumps(gap_top3, ensure_ascii=False),
+                    gate_result_json=json.dumps(gate_result, ensure_ascii=False),
+                    knowledge_context=knowledge_context,
+                    learning_context=learning_context,
+                )
 
-            # Strict validation check
-            vr = validate_offer_3(offers)
-            if not vr.valid:
-                raise ValueError(f"オファー生成が不完全: {vr.errors}")
+                offers = generate_json_with_retry(
+                    prompt=prompt,
+                    system=(
+                        "あなたは事業開発の専門家です。"
+                        "スコアを出すな。7つの必須フィールドを全て埋めること。"
+                        "架空の数値は禁止。必ず3案をJSON配列で出力すること。"
+                    ),
+                    max_tokens=8192,
+                    temperature=0.5,
+                    max_retries=3,
+                    validator=validate_offer_3,
+                )
 
-            # Save to sheets
-            offer_rows: list[list] = []
-            for offer in offers:
-                offer_rows.append([
-                    run_id,
-                    offer.get("offer_num", ""),
-                    offer.get("payer", ""),
-                    offer.get("offer_name", ""),
-                    offer.get("deliverable", ""),
-                    offer.get("time_to_value", ""),
-                    offer.get("price", ""),
-                    offer.get("replaces", ""),
-                    offer.get("upsell", ""),
-                ])
-            if offer_rows:
-                from utils.sheets_client import append_rows as _append
-                _append("offer_3_log", offer_rows)
+                if isinstance(offers, dict):
+                    offers = [offers]
 
-            steps.append(_make_step_result("0: オファー3案", STEP_OK,
-                                           count=len(offers), data=offers))
-        except Exception as e:
-            steps.append(_make_step_result("0: オファー3案", STEP_FAIL,
-                                           errors=[str(e)]))
-            _abort_pipeline(steps, run_id, start_time)
-            return
+                # Strict validation check
+                vr = validate_offer_3(offers)
+                if not vr.valid:
+                    raise ValueError(f"オファー生成が不完全: {vr.errors}")
+
+                # Save to sheets
+                offer_rows: list[list] = []
+                for offer in offers:
+                    offer_rows.append([
+                        run_id,
+                        offer.get("offer_num", ""),
+                        offer.get("payer", ""),
+                        offer.get("offer_name", ""),
+                        offer.get("deliverable", ""),
+                        offer.get("time_to_value", ""),
+                        offer.get("price", ""),
+                        offer.get("replaces", ""),
+                        offer.get("upsell", ""),
+                    ])
+                if offer_rows:
+                    from utils.sheets_client import append_rows as _append
+                    _append("offer_3_log", offer_rows)
+
+                steps.append(_make_step_result("0: オファー3案", STEP_OK,
+                                               count=len(offers), data=offers))
+            except Exception as e:
+                logger.error(f"0 exception (continuing): {e}")
+                steps.append(_make_step_result("0: オファー3案", STEP_FAIL,
+                                               errors=[str(e)]))
 
         # ===================================================================
         # LP: Readiness check
@@ -666,7 +695,13 @@ def main():
         elapsed = time.time() - start_time
         total_duration = f"{int(elapsed // 60)}分{int(elapsed % 60)}秒"
 
-        send_pipeline_report(steps, run_id, lp_check, total_duration)
+        # Count offers from step results
+        _offer_count = next((s.get("count", 0) for s in steps if "オファー" in s["name"]), 0)
+        send_pipeline_report(
+            steps, run_id, lp_check, total_duration,
+            passed_market_count=len(passed_markets),
+            offer_count=_offer_count,
+        )
 
         # Final status
         has_errors = any(s["status"] == STEP_FAIL for s in steps)

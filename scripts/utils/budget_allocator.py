@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import get_logger
-from utils.sheets_client import get_all_rows, get_rows_by_status
+from utils.sheets_client import get_all_rows
+from utils.v2_markets import get_active_v2_markets
 
 logger = get_logger("budget_allocator")
 
@@ -54,7 +55,8 @@ def generate_reallocation_proposal(lookback_days: int = 7) -> dict:
 
     cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
 
-    active_ideas = get_rows_by_status("business_ideas", "active")
+    # V2: Read active markets from lp_ready_log + gate_decision_log
+    active_ideas = get_active_v2_markets()
     if not active_ideas:
         return {"total_monthly_budget": total_budget, "businesses": [], "summary": "active事業なし"}
 

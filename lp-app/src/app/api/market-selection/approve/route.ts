@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateCell } from "@/lib/sheets";
+import { appendRows } from "@/lib/sheets";
 
 /**
  * POST /api/market-selection/approve
  *
- * Approve or reject a market selection.
- * Body: { market_id: string, action: "approve" | "reject" }
+ * V2: Records market approval/rejection in ceo_reject_log.
+ * Body: { market_id: string (run_id), action: "approve" | "reject", market_name?: string }
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { market_id, action } = body;
+    const { market_id, action, market_name } = body;
 
     if (!market_id || !["approve", "reject"].includes(action)) {
       return NextResponse.json(
@@ -19,37 +19,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const newStatus = action === "approve" ? "selected" : "rejected";
+    const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const logType = action === "approve" ? "run_approve" : "market";
+    const rejectedItem = market_name || market_id.slice(0, 8);
+    const reason = action === "approve" ? "承認" : "却下";
 
-    const updated = await updateCell(
-      "market_selection",
-      "id",
-      market_id,
-      "status",
-      newStatus,
-    );
+    await appendRows("ceo_reject_log", [
+      [market_id, logType, rejectedItem, reason, "dashboard", now],
+    ]);
 
-    if (!updated) {
-      return NextResponse.json(
-        { error: `Market selection not found: ${market_id}` },
-        { status: 404 },
-      );
-    }
-
-    // Also update reviewed_by
-    await updateCell(
-      "market_selection",
-      "id",
-      market_id,
-      "reviewed_by",
-      "dashboard",
-    );
-
-    return NextResponse.json({ ok: true, market_id, status: newStatus });
+    return NextResponse.json({ ok: true, market_id, status: action });
   } catch (err) {
     console.error("Market approval error:", err);
     return NextResponse.json(
-      { error: "Failed to update market selection" },
+      { error: "Failed to update market" },
       { status: 500 },
     );
   }

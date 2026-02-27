@@ -1,5 +1,5 @@
 """
-AI API wrapper — Gemini only.
+AI API wrapper — Gemini only (google-genai SDK).
 
 All pipeline scripts import from this module.
 """
@@ -21,19 +21,18 @@ from config import (
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Gemini client
+# Gemini client (google-genai SDK)
 # ---------------------------------------------------------------------------
-_gemini_model = None
+_client = None
 
 
-def _get_gemini_model():
-    global _gemini_model
-    if _gemini_model is None:
-        import google.generativeai as genai
+def _get_client():
+    global _client
+    if _client is None:
+        from google import genai
 
-        genai.configure(api_key=GEMINI_API_KEY)
-        _gemini_model = genai.GenerativeModel(GEMINI_MODEL)
-    return _gemini_model
+        _client = genai.Client(api_key=GEMINI_API_KEY)
+    return _client
 
 
 def _generate_gemini(
@@ -50,36 +49,30 @@ def _generate_gemini(
         use_search: Enable Google Search grounding for evidence-based tasks.
                     NOTE: Cannot be used with response_mime_type (JSON mode).
     """
-    import google.generativeai as genai
+    from google.genai import types
 
-    model = _get_gemini_model()
+    client = _get_client()
 
-    # Gemini doesn't have a separate system param — prepend to prompt
-    full_prompt = f"{system}\n\n{prompt}" if system else prompt
-
-    generation_config = genai.GenerationConfig(
-        max_output_tokens=max_tokens,
-        temperature=temperature,
-    )
+    config_kwargs: dict[str, Any] = {
+        "max_output_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if system:
+        config_kwargs["system_instruction"] = system
     if response_mime_type and not use_search:
-        generation_config = genai.GenerationConfig(
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-            response_mime_type=response_mime_type,
-        )
-
-    # Google Search grounding tool for evidence-based tasks
-    tools = None
+        config_kwargs["response_mime_type"] = response_mime_type
     if use_search:
-        tools = [genai.protos.Tool(
-            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
-        )]
+        config_kwargs["tools"] = [
+            types.Tool(google_search=types.GoogleSearch())
+        ]
+
+    config = types.GenerateContentConfig(**config_kwargs)
 
     logger.info(f"Gemini API call: model={GEMINI_MODEL}, max_tokens={max_tokens}, search={use_search}")
-    response = model.generate_content(
-        full_prompt,
-        generation_config=generation_config,
-        tools=tools,
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=config,
     )
     text = response.text
     logger.info(f"Gemini API response: {len(text)} chars")

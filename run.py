@@ -9,6 +9,7 @@ Usage:
 import os
 import sys
 import importlib
+import importlib.util
 
 # V2パイプライン専用ディスパッチ
 # A_market_research, C_competitor_analysis, 0_idea_generator は

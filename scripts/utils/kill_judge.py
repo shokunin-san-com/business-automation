@@ -1,7 +1,7 @@
 """
-Kill judge — automatic business sunset recommendation.
+Kill judge — V2: automatic market sunset recommendation.
 
-Evaluates active businesses against kill criteria and flags underperformers.
+Evaluates READY markets against kill criteria using V2 data sources.
 """
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import get_logger
-from utils.sheets_client import get_all_rows, get_rows_by_status, find_row_index, get_worksheet
+from utils.sheets_client import get_all_rows
+from utils.v2_markets import get_active_v2_markets
 
 logger = get_logger("kill_judge")
 
@@ -23,12 +24,12 @@ def _load_settings() -> dict:
 
 
 def evaluate_kill_criteria() -> list[dict]:
-    """Evaluate all active businesses against kill criteria.
+    """Evaluate active V2 markets against kill criteria.
 
-    Returns list of businesses recommended for sunset:
+    Returns list of markets recommended for sunset:
     [
         {
-            "business_id": str,
+            "run_id": str,
             "name": str,
             "reason": str,
             "avg_score": float,
@@ -50,36 +51,31 @@ def evaluate_kill_criteria() -> list[dict]:
 
     cutoff = (datetime.now() - timedelta(days=eval_days)).strftime("%Y-%m-%d")
 
-    active_ideas = get_rows_by_status("business_ideas", "active")
-    if not active_ideas:
+    # V2: Read active markets from lp_ready_log + gate_decision_log
+    active_markets = get_active_v2_markets()
+    if not active_markets:
         return []
 
     perf_rows = get_all_rows("performance_log")
 
     results = []
 
-    for idea in active_ideas:
-        bid = idea.get("id", "")
-        name = idea.get("name", bid)
-        created = idea.get("created_at", "")
+    for market in active_markets:
+        rid = market.get("id", "")
+        name = market.get("name", rid[:8])
 
-        if not bid:
+        if not rid:
             continue
-
-        # Check if business has been active long enough
-        if created and str(created)[:10] > cutoff:
-            continue  # Too new, skip
 
         # Get performance records in evaluation window
         biz_perf = [
             r for r in perf_rows
-            if r.get("business_id") == bid and str(r.get("date", "")) >= cutoff
+            if r.get("business_id") == rid and str(r.get("date", "")) >= cutoff
         ]
 
         if not biz_perf:
-            # No performance data at all after eval_days -> warning
             results.append({
-                "business_id": bid,
+                "run_id": rid,
                 "name": name,
                 "reason": f"{eval_days}日間パフォーマンスデータなし",
                 "avg_score": 0,
@@ -106,13 +102,12 @@ def evaluate_kill_criteria() -> list[dict]:
             reasons.append("PV完全ゼロ")
 
         if reasons:
-            # Determine severity
             recommendation = "kill" if len(reasons) >= 2 else "warning"
             if total_cv == 0 and avg_score < min_score / 2:
                 recommendation = "kill"
 
             results.append({
-                "business_id": bid,
+                "run_id": rid,
                 "name": name,
                 "reason": " / ".join(reasons),
                 "avg_score": round(avg_score, 1),
@@ -121,31 +116,5 @@ def evaluate_kill_criteria() -> list[dict]:
                 "recommendation": recommendation,
             })
 
-    logger.info(f"Kill judge: {len(results)} businesses flagged out of {len(active_ideas)} active")
+    logger.info(f"Kill judge: {len(results)} markets flagged out of {len(active_markets)} active")
     return results
-
-
-def apply_kill_flag(business_id: str) -> bool:
-    """Set a business status to 'sunset_recommended'.
-
-    Does NOT auto-kill. Only flags for human review.
-    Returns True if flag was set.
-    """
-    ws = get_worksheet("business_ideas")
-    headers = ws.row_values(1)
-    status_col = headers.index("status") + 1 if "status" in headers else None
-
-    if not status_col:
-        return False
-
-    row_idx = find_row_index("business_ideas", "id", business_id)
-    if not row_idx:
-        return False
-
-    current = ws.cell(row_idx, status_col).value
-    if current == "active":
-        ws.update_cell(row_idx, status_col, "sunset_recommended")
-        logger.info(f"Flagged {business_id} as sunset_recommended")
-        return True
-
-    return False

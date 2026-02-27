@@ -415,13 +415,11 @@ async function gatherDataContext(lower: string): Promise<string> {
   const parts: string[] = [];
 
   try {
-    // Always include basic overview — fetch both V2 and legacy data
-    const [ideas, status, analytics, snsPosts, marketSelection, microMarkets, gateLog, competitor20, offer3, lpReady, explorationLane] = await Promise.all([
-      getAllRows("business_ideas").catch(() => []),
+    // V2: Fetch only V2 data sources (V1 business_ideas/market_selection deleted)
+    const [status, analytics, snsPosts, microMarkets, gateLog, competitor20, offer3, lpReady, explorationLane] = await Promise.all([
       getAllRows("pipeline_status").catch(() => []),
       getAllRows("analytics").catch(() => []),
       getAllRows("sns_posts").catch(() => []),
-      getAllRows("market_selection").catch(() => []),
       getAllRows("micro_market_list").catch(() => []),
       getAllRows("gate_decision_log").catch(() => []),
       getAllRows("competitor_20_log").catch(() => []),
@@ -430,15 +428,16 @@ async function gatherDataContext(lower: string): Promise<string> {
       getAllRows("exploration_lane_log").catch(() => []),
     ]);
 
-    const activeIdeas = ideas.filter((i) => i.status === "active");
-    const pendingIdeas = ideas.filter((i) => i.status === "pending_approval");
+    // V2: Derive active/pending from gate_decision_log + lp_ready_log
+    const passMarkets = gateLog.filter((g) => g.status === "PASS");
+    const readyRuns = lpReady.filter((r) => r.status === "READY");
     const errors = status.filter((s) => s.status === "error");
 
-    parts.push(`【事業案】合計${ideas.length}件、アクティブ${activeIdeas.length}件、承認待ち${pendingIdeas.length}件`);
+    parts.push(`【V2市場】PASS ${passMarkets.length}件、READY ${readyRuns.length}件、オファー ${offer3.length}案`);
 
-    if (activeIdeas.length > 0) {
-      const names = activeIdeas.slice(0, 5).map((i) => i.name || i.id).join(", ");
-      parts.push(`アクティブ事業: ${names}`);
+    if (passMarkets.length > 0) {
+      const names = passMarkets.slice(0, 5).map((g) => g.micro_market || g.run_id?.slice(0, 8)).join(", ");
+      parts.push(`PASS市場: ${names}`);
     }
 
     // Pipeline status
@@ -466,8 +465,8 @@ async function gatherDataContext(lower: string): Promise<string> {
 
       if (/lp|成果|pv|コンバージョン|分析|アクセス/.test(lower)) {
         for (const [bid, data] of Object.entries(latestByBiz).slice(0, 5)) {
-          const idea = ideas.find((i) => i.id === bid);
-          parts.push(`  ${idea?.name || bid}: PV${data.pageviews} / CV${data.conversions} / 直帰率${data.bounce_rate}%`);
+          const gate = gateLog.find((g) => g.run_id === bid && g.status === "PASS");
+          parts.push(`  ${gate?.micro_market || bid.slice(0, 8)}: PV${data.pageviews} / CV${data.conversions} / 直帰率${data.bounce_rate}%`);
         }
       }
     }
@@ -534,16 +533,6 @@ async function gatherDataContext(lower: string): Promise<string> {
       const ready = lpReady.filter((l) => l.status === "READY");
       const blocked = lpReady.filter((l) => l.status === "BLOCKED");
       parts.push(`【V2 LP作成ガード】READY: ${ready.length}件、BLOCKED: ${blocked.length}件`);
-    }
-
-    // Legacy market selection data (V1 — reference only)
-    if (/市場|選定|スコア|承認|セグメント|パイプライン|abc0|自律/.test(lower) && marketSelection.length > 0) {
-      const selected = marketSelection.filter((m) => m.status === "selected");
-      const recent = marketSelection.slice(-10);
-      parts.push(`【旧V1 市場選定（参考）】合計${marketSelection.length}件、承認済み${selected.length}件`);
-      for (const m of recent) {
-        parts.push(`  ${m.status === "selected" ? "✅" : "⏳"} ${m.market_name || ""}: 旧スコア${m.total_score || "N/A"}`);
-      }
     }
 
     // Learning memory
@@ -775,12 +764,13 @@ function getSystemExplanation(): string {
 
 async function getLPPerformanceSummary(): Promise<string> {
   try {
-    const [analytics, ideas] = await Promise.all([
+    const [analytics, lpReady, gateLog] = await Promise.all([
       getAllRows("analytics").catch(() => []),
-      getAllRows("business_ideas").catch(() => []),
+      getAllRows("lp_ready_log").catch(() => []),
+      getAllRows("gate_decision_log").catch(() => []),
     ]);
 
-    const activeIdeas = ideas.filter((i) => i.status === "active");
+    const activeIdeas = lpReady.filter((r) => r.status === "READY");
 
     if (analytics.length === 0) {
       return "📊 *LP成果レポート*\n\nまだ分析データがありません。分析・改善パイプラインの実行後にデータが蓄積されます。";
@@ -808,8 +798,8 @@ async function getLPPerformanceSummary(): Promise<string> {
     if (entries.length > 0) {
       text += `*事業別内訳:*\n`;
       for (const [bid, data] of entries.slice(0, 5)) {
-        const idea = ideas.find((i) => i.id === bid);
-        const name = idea?.name || bid;
+        const gate = gateLog.find((g) => g.run_id === bid && g.status === "PASS");
+        const name = gate?.micro_market || bid;
         const pv = Number(data.pageviews) || 0;
         const cv = Number(data.conversions) || 0;
         const br = Number(data.bounce_rate) || 0;
@@ -892,20 +882,25 @@ async function getSNSSummary(): Promise<string> {
 
 async function getIdeasSummary(): Promise<string> {
   try {
-    const ideas = await getAllRows("business_ideas").catch(() => []);
-    const active = ideas.filter((i) => i.status === "active");
-    const pending = ideas.filter((i) => i.status === "pending_approval");
+    // V2: Use gate_decision_log + offer_3_log + lp_ready_log
+    const [gateLog, offer3, lpReady] = await Promise.all([
+      getAllRows("gate_decision_log").catch(() => []),
+      getAllRows("offer_3_log").catch(() => []),
+      getAllRows("lp_ready_log").catch(() => []),
+    ]);
 
-    let text = `💡 *事業案サマリー*\n\n`;
-    text += `• 総数: *${ideas.length}*件\n`;
-    text += `• アクティブ: *${active.length}*件\n`;
-    text += `• 承認待ち: *${pending.length}*件\n\n`;
+    const passMarkets = gateLog.filter((g) => g.status === "PASS");
+    const readyRuns = lpReady.filter((r) => r.status === "READY");
 
-    if (active.length > 0) {
-      text += `*アクティブ事業:*\n`;
-      for (const idea of active.slice(0, 5)) {
-        const score = idea.score ? `(スコア: ${idea.score})` : "";
-        text += `  • ${idea.name || idea.id} ${score}\n`;
+    let text = `💡 *V2市場サマリー*\n\n`;
+    text += `• PASS市場: *${passMarkets.length}*件\n`;
+    text += `• READY: *${readyRuns.length}*件\n`;
+    text += `• オファー: *${offer3.length}*案\n\n`;
+
+    if (passMarkets.length > 0) {
+      text += `*PASS市場:*\n`;
+      for (const gate of passMarkets.slice(0, 5)) {
+        text += `  • ${gate.micro_market || gate.run_id?.slice(0, 8)} (${gate.payer || ""})\n`;
       }
     }
 
@@ -918,13 +913,13 @@ async function getIdeasSummary(): Promise<string> {
 
 async function getOverview(): Promise<string> {
   try {
-    const [ideas, status, analytics] = await Promise.all([
-      getAllRows("business_ideas").catch(() => []),
+    const [lpReady, status, analytics] = await Promise.all([
+      getAllRows("lp_ready_log").catch(() => []),
       getAllRows("pipeline_status").catch(() => []),
       getAllRows("analytics").catch(() => []),
     ]);
 
-    const activeIdeas = ideas.filter((i) => i.status === "active").length;
+    const activeIdeas = lpReady.filter((r) => r.status === "READY").length;
     const errors = status.filter((s) => s.status === "error").length;
     const totalPV = analytics.reduce((s, e) => s + (Number(e.pageviews) || 0), 0);
 
@@ -943,15 +938,16 @@ async function getOverview(): Promise<string> {
 
 async function getStrategySummary(): Promise<string> {
   try {
-    const [ideas, status, analytics, snsPosts] = await Promise.all([
-      getAllRows("business_ideas").catch(() => []),
+    const [gateLog, lpReady, status, analytics, snsPosts] = await Promise.all([
+      getAllRows("gate_decision_log").catch(() => []),
+      getAllRows("lp_ready_log").catch(() => []),
       getAllRows("pipeline_status").catch(() => []),
       getAllRows("analytics").catch(() => []),
       getAllRows("sns_posts").catch(() => []),
     ]);
 
-    const activeIdeas = ideas.filter((i) => i.status === "active");
-    const pendingIdeas = ideas.filter((i) => i.status === "pending_approval");
+    const activeIdeas = gateLog.filter((g) => g.status === "PASS");
+    const pendingIdeas = lpReady.filter((r) => r.status === "READY");
     const errors = status.filter((s) => s.status === "error");
 
     const latestByBiz: Record<string, typeof analytics[0]> = {};

@@ -8,7 +8,7 @@ google-auth==2.48.0
 google-auth-oauthlib==1.2.4
 google-auth-httplib2==0.3.0
 
-# Claude API / HTTP
+# HTTP
 httpx==0.28.1
 requests==2.32.5
 
@@ -34,5 +34,5 @@ google-ads>=25.0.0
 # Google Cloud Storage
 google-cloud-storage>=2.18.0
 
-# Gemini
-google-generativeai>=0.8.0
+# Gemini (new SDK)
+google-genai>=1.0.0
