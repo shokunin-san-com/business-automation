@@ -165,6 +165,17 @@ def _try_supabase_upsert(post_data: dict) -> bool:
 
 def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int:
     """Generate all blog articles for a business."""
+    # Ensure business is registered in businesses table (auto-generates slug)
+    try:
+        from utils.supabase_client import ensure_business
+        biz = ensure_business(business_id)
+        if biz:
+            logger.info(f"Business ready: {biz.get('slug')} ({biz.get('display_name')})")
+        else:
+            logger.warning(f"Could not register business '{business_id}' — blog will still generate")
+    except Exception as e:
+        logger.warning(f"Business registration skipped: {e}")
+
     market = _get_market_info(business_id)
     lp_url = f"{LP_BASE_URL}/lp/{quote(business_id, safe='')}"
 
@@ -289,10 +300,19 @@ def main():
 
     logger.info(f"=== Blog generator complete: {total} articles generated ===")
     if total > 0:
+        # Get business slug for the blog URL
+        blog_url = f"{LP_BASE_URL}"
+        try:
+            from utils.supabase_client import get_client
+            res = get_client().table("businesses").select("slug").eq("business_id", args.business_id).single().execute()
+            if res.data:
+                blog_url = f"{LP_BASE_URL}/{res.data['slug']}"
+        except Exception:
+            pass
         slack_notify(
             f":page_facing_up: ブログ記事を *{total}件* 生成しました\n"
             f"事業: {args.business_id[:30]}\n"
-            f"ブログ: {LP_BASE_URL}/blog"
+            f"ブログ: {blog_url}"
         )
 
 

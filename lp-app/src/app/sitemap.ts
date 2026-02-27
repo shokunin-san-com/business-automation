@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { getAllLPSlugs } from "@/lib/lp-data";
 import { getAllArticleSlugs } from "@/lib/blog-data";
+import { getAllBusinesses } from "@/lib/business-data";
 
 const BASE_URL = "https://lp-app-pi.vercel.app";
 
@@ -12,13 +13,34 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "weekly",
       priority: 1.0,
     },
-    {
-      url: `${BASE_URL}/blog`,
-      lastModified: new Date(),
-      changeFrequency: "daily",
-      priority: 0.9,
-    },
   ];
+
+  // Business-scoped blog pages
+  try {
+    const businesses = await getAllBusinesses();
+    for (const biz of businesses) {
+      // Business blog listing
+      entries.push({
+        url: `${BASE_URL}/${biz.slug}`,
+        lastModified: new Date(),
+        changeFrequency: "daily",
+        priority: 0.9,
+      });
+
+      // Articles for this business
+      const slugs = await getAllArticleSlugs(undefined, biz.business_id);
+      for (const slug of slugs) {
+        entries.push({
+          url: `${BASE_URL}/${biz.slug}/${encodeURIComponent(slug)}`,
+          lastModified: new Date(),
+          changeFrequency: "monthly",
+          priority: 0.7,
+        });
+      }
+    }
+  } catch {
+    /* ignore */
+  }
 
   // LP pages
   try {
@@ -29,21 +51,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         lastModified: new Date(),
         changeFrequency: "weekly",
         priority: 0.8,
-      });
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // Blog articles
-  try {
-    const articleSlugs = await getAllArticleSlugs();
-    for (const slug of articleSlugs) {
-      entries.push({
-        url: `${BASE_URL}/blog/${encodeURIComponent(slug)}`,
-        lastModified: new Date(),
-        changeFrequency: "monthly",
-        priority: 0.7,
       });
     }
   } catch {

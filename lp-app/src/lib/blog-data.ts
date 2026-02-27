@@ -30,19 +30,24 @@ const FULL_COLUMNS = `${SUMMARY_COLUMNS}, body_html, body_json, author_id`;
  * Get a single blog article by slug (cached per request).
  */
 export const getArticle = cache(
-  async (slug: string, mediaId?: string): Promise<BlogArticle | null> => {
+  async (slug: string, mediaId?: string, businessId?: string): Promise<BlogArticle | null> => {
     const supabase = await getSupabase();
     if (!supabase) return null;
 
     const decoded = decodeURIComponent(slug);
-    const { data, error } = await supabase
+    let query = supabase
       .from("posts")
       .select(FULL_COLUMNS)
       .eq("media_id", mediaId || DEFAULT_MEDIA_ID)
       .eq("slug", decoded)
       .eq("status", "published")
-      .lte("published_at", new Date().toISOString())
-      .single();
+      .lte("published_at", new Date().toISOString());
+
+    if (businessId) {
+      query = query.eq("business_id", businessId);
+    }
+
+    const { data, error } = await query.single();
 
     if (error || !data) return null;
 
@@ -87,15 +92,22 @@ export async function getAllArticles(
  */
 export async function getAllArticleSlugs(
   mediaId?: string,
+  businessId?: string,
 ): Promise<string[]> {
   const supabase = await getSupabase();
   if (!supabase) return [];
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("posts")
     .select("slug")
     .eq("media_id", mediaId || DEFAULT_MEDIA_ID)
     .eq("status", "published");
+
+  if (businessId) {
+    query = query.eq("business_id", businessId);
+  }
+
+  const { data, error } = await query;
 
   if (error || !data) return [];
   return data.map((r) => r.slug).filter(Boolean);
@@ -109,11 +121,12 @@ export async function getArticlesByCategory(
   excludeSlug?: string,
   limit = 3,
   mediaId?: string,
+  businessId?: string,
 ): Promise<BlogArticleSummary[]> {
   const supabase = await getSupabase();
   if (!supabase) return [];
 
-  const query = supabase
+  let query = supabase
     .from("posts")
     .select(SUMMARY_COLUMNS)
     .eq("media_id", mediaId || DEFAULT_MEDIA_ID)
@@ -122,6 +135,10 @@ export async function getArticlesByCategory(
     .lte("published_at", new Date().toISOString())
     .order("published_at", { ascending: false })
     .limit(limit + 1);
+
+  if (businessId) {
+    query = query.eq("business_id", businessId);
+  }
 
   const { data, error } = await query;
 
@@ -161,8 +178,9 @@ export async function getArticlesByTag(
  */
 export async function getAllCategories(
   mediaId?: string,
+  businessId?: string,
 ): Promise<string[]> {
-  const articles = await getAllArticles(mediaId);
+  const articles = await getAllArticles(mediaId, businessId);
   const categories = new Set(articles.map((a) => a.category).filter(Boolean));
   return Array.from(categories).sort();
 }
