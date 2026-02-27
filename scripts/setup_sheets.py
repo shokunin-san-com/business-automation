@@ -277,6 +277,37 @@ SHEETS = {
         "executed_at",
         "result",
     ],
+    # ---------------------------------------------------------------
+    # SNS投稿キュー + ブログ記事
+    # ---------------------------------------------------------------
+    "sns_queue": [
+        "queue_id",
+        "business_id",
+        "platform",
+        "post_text",
+        "category",
+        "status",           # queued / posted / failed / skipped
+        "scheduled_at",
+        "posted_at",
+        "post_url",
+        "error_detail",
+    ],
+    "blog_articles": [
+        "article_id",
+        "business_id",
+        "title",
+        "slug",
+        "body_html",
+        "excerpt",
+        "category",
+        "tags",
+        "meta_description",
+        "og_title",
+        "og_description",
+        "status",           # draft / published
+        "published_at",
+        "generated_at",
+    ],
 }
 
 # Default settings to seed

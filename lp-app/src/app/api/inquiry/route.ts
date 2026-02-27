@@ -43,6 +43,35 @@ export async function POST(request: NextRequest) {
       ],
     ]);
 
+    // Send Slack / Google Chat notification for new inquiry
+    try {
+      const notifyText =
+        `🔔 *新規お問い合わせ*\n` +
+        `事業: ${business_id}\n` +
+        `会社: ${company_name || "未記入"}\n` +
+        `担当者: ${contact_name || "未記入"}\n` +
+        `メール: ${contact_email}\n` +
+        `経路: ${source_lp_url || "不明"}\n` +
+        `メッセージ: ${(message || "").slice(0, 100)}`;
+
+      const webhooks = [
+        process.env.SLACK_WEBHOOK_URL,
+        process.env.GCHAT_WEBHOOK_URL,
+      ].filter(Boolean);
+
+      await Promise.allSettled(
+        webhooks.map((url) =>
+          fetch(url!, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: notifyText }),
+          }),
+        ),
+      );
+    } catch {
+      // Non-critical: don't fail the inquiry recording
+    }
+
     return NextResponse.json({ ok: true, inquiry_id: inquiryId });
   } catch (err) {
     console.error("Inquiry POST error:", err);

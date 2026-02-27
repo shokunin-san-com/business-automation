@@ -143,28 +143,18 @@ def _try_post(
 
 
 def _check_distribution_guard() -> tuple[bool, str]:
-    """V2 distribution guard: check lp_ready_log READY + interview_log >= 5.
+    """V2 distribution guard: check lp_ready_log has READY markets.
 
-    Returns: (can_proceed, reason)
+    Interview requirement removed per CEO directive (2026-02-27):
+    Focus on completing one market end-to-end first.
     """
     try:
         lp_ready = get_all_rows("lp_ready_log")
         active_ready = [r for r in lp_ready if r.get("status") == "READY"]
         if not active_ready:
             return False, "lp_ready_logにREADYレコードなし"
-
-        latest_run_id = active_ready[-1].get("run_id", "")
-        if latest_run_id:
-            interviews = get_all_rows("interview_log")
-            interview_count = len([
-                i for i in interviews
-                if i.get("run_id") == latest_run_id
-            ])
-            if interview_count < 5:
-                return False, f"ヒアリング{interview_count}/5件"
     except Exception as e:
         logger.warning(f"Distribution guard check error: {e}")
-        # On error, allow execution (don't block on guard infrastructure failure)
         return True, ""
 
     return True, ""
