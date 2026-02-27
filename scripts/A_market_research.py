@@ -280,7 +280,7 @@ def step_a1_deep_gate(
             ),
             max_tokens=16384,
             temperature=0.3,
-            max_retries=2,
+            max_retries=3,
             validator=validate_a1_deep,
             use_search=True,
         )

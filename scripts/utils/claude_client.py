@@ -74,7 +74,13 @@ def _generate_gemini(
         contents=prompt,
         config=config,
     )
-    text = response.text
+    text = response.text or ""
+    if not text.strip():
+        # Check for safety block or empty response
+        block_reason = ""
+        if hasattr(response, "prompt_feedback") and response.prompt_feedback:
+            block_reason = f" (block_reason={response.prompt_feedback})"
+        raise ValueError(f"Gemini returned empty response{block_reason}")
     logger.info(f"Gemini API response: {len(text)} chars")
     return text
 
@@ -176,15 +182,23 @@ def generate_json_with_retry(
                 use_search=use_search,
             )
         except Exception as e:
-            logger.warning(f"API call failed on attempt {attempt}: {e}")
-            last_errors = [str(e)]
-            if attempt == max_retries:
+            err_str = str(e)
+            logger.warning(f"API call failed on attempt {attempt}: {err_str}")
+            # Retryable errors: empty response, JSON parse failure, rate limit
+            retryable = any(kw in err_str.lower() for kw in [
+                "empty", "expecting value", "json parse", "resource exhausted",
+                "429", "500", "503", "deadline",
+            ])
+            last_errors = [err_str]
+            if attempt == max_retries or not retryable:
                 raise
+            import time
+            time.sleep(min(2 ** attempt, 10))  # exponential backoff
             continue
 
-        # Check for parse failure (empty list returned by _parse_json_response)
-        if result == [] and attempt < max_retries:
-            last_errors = ["JSONパースエラー: 空のリストが返却されました"]
+        # Check for parse failure (empty result)
+        if (result == [] or result == {}) and attempt < max_retries:
+            last_errors = ["JSONパースエラー: 空の結果が返却されました"]
             continue
 
         # Run validator if provided
