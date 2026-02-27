@@ -50,14 +50,24 @@ def upload_json(destination_path: str, data: dict) -> str:
 
         bucket = client.bucket(GCS_BUCKET_NAME)
         blob = bucket.blob(destination_path)
-        # Sanitize control characters that break JSON serialization
-        json_str = json.dumps(data, ensure_ascii=False, indent=2)
-        # Remove control characters except \n, \r, \t
+
+        # Recursively sanitize string values to remove control characters
         import re
-        json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
+
+        def _sanitize(obj):
+            if isinstance(obj, str):
+                return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', obj)
+            elif isinstance(obj, dict):
+                return {k: _sanitize(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_sanitize(v) for v in obj]
+            return obj
+
+        clean_data = _sanitize(data)
+        json_str = json.dumps(clean_data, ensure_ascii=False, indent=2)
         blob.upload_from_string(
-            json_str,
-            content_type="application/json",
+            json_str.encode("utf-8"),
+            content_type="application/json; charset=utf-8",
         )
 
         url = f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{destination_path}"
