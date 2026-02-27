@@ -28,8 +28,10 @@ SCRIPT_MAP = {
     "5_slack_reporter": "scripts.5_slack_reporter",
     "7_learning_engine": "scripts.7_learning_engine",
     "9_expansion_engine": "scripts.9_expansion_engine",
-    # V1 廃止済み（実行するとエラー）:
-    # B_market_selection, 6_ads_monitor, 8_ads_creator, orchestrate_abc0
+    # コンテンツ生成（引数はSCRIPT_ARGS環境変数で渡す）
+    "sns_batch_generator": "scripts.sns_batch_generator",
+    "sns_scheduled_poster": "scripts.sns_scheduled_poster",
+    "blog_generator": "scripts.blog_generator",
 }
 
 
@@ -44,6 +46,13 @@ def main():
         print(f"ERROR: Unknown script: {script_name}")
         print(f"Available scripts: {', '.join(SCRIPT_MAP.keys())}")
         sys.exit(1)
+
+    # Inject SCRIPT_ARGS into sys.argv for argparse-based scripts
+    script_args = os.getenv("SCRIPT_ARGS", "")
+    if script_args:
+        import shlex
+        sys.argv = [script_name] + shlex.split(script_args)
+        print(f"Script args: {sys.argv[1:]}")
 
     module_path = SCRIPT_MAP[script_name]
 
