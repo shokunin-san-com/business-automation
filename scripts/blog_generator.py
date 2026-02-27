@@ -207,16 +207,8 @@ def generate_articles(business_id: str) -> int:
                 else:
                     tags_str = str(tags)
 
-                # Append CTA HTML to body
-                cta_html = (
-                    f'<div style="margin-top:2em;padding:1.5em;background:#eff6ff;border-radius:12px;text-align:center">'
-                    f'<h3>住宅塗装の見積もりを自動化しませんか？</h3>'
-                    f'<p>AIが顧客の要望を反映した最適な見積もりを自動生成。初月無料でお試しいただけます。</p>'
-                    f'<a href="{lp_url}" style="display:inline-block;margin-top:1em;padding:0.75em 2em;'
-                    f'background:#2563eb;color:white;border-radius:8px;text-decoration:none;font-weight:bold">'
-                    f'無料で試してみる →</a></div>'
-                )
-                body_html = result.get("body_html", "") + cta_html
+                # CTA is rendered by the blog UI component, not embedded in HTML
+                body_html = result.get("body_html", "")
 
                 row = [
                     article_id,

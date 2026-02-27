@@ -3,6 +3,15 @@ import { getAllRows } from "./sheets";
 
 const GCS_BUCKET = process.env.GCS_BUCKET_NAME || "marketprobe-automation-lps";
 
+/** Strip inline CTA blocks injected by blog_generator into body_html */
+function stripInlineCTA(html: string): string {
+  // Remove the CTA div block that starts with "住宅塗装の見積もりを自動化しませんか？"
+  return html.replace(
+    /<div style="margin-top:2em;padding:1\.5em;background:#eff6ff[^"]*"[^>]*>[\s\S]*?<\/div>\s*$/,
+    "",
+  );
+}
+
 /**
  * Get all published blog article slugs.
  */
@@ -56,7 +65,7 @@ export async function getArticle(slug: string): Promise<BlogArticle | null> {
       business_id: row.business_id || "",
       title: row.title || "",
       slug: row.slug || "",
-      body_html: row.body_html || "",
+      body_html: stripInlineCTA(row.body_html || ""),
       excerpt: row.excerpt || "",
       category: row.category || "",
       tags,
