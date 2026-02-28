@@ -3,11 +3,16 @@ blog_generator.py — Generate 50 SEO blog articles for a target market.
 
 Generates articles across 10 categories (5 per category),
 stores in Supabase posts table (primary) and blog_articles sheet (fallback).
+Auto-assigns cover images from Supabase Storage pool.
+
+Can be called directly via CLI or imported by 1_lp_generator.py.
 """
 
 import sys
+import os
 import uuid
 import json
+import random
 from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import quote
@@ -28,109 +33,186 @@ jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 LP_BASE_URL = "https://lp-app-pi.vercel.app"
 DEFAULT_MEDIA_ID = "shokunin-san"
 
-# 10 categories x 5 articles each = 50 articles
-ARTICLE_TOPICS = {
-    "industry_challenges": {
-        "label": "業界課題解説",
-        "topics": [
-            "住宅塗装業界が抱える見積もり作成の3大課題と解決策",
-            "塗装リフォーム会社の利益率を圧迫する「見えないコスト」とは",
-            "なぜ塗装見積もりのミスが受注率低下につながるのか",
-            "住宅塗装業の人手不足と見積もり業務の関係性",
-            "お客様が塗装会社を比較するとき、見積もりの何を見ているか",
-        ],
-    },
-    "howto": {
-        "label": "ハウツー",
-        "topics": [
-            "住宅塗装の見積もり精度を上げる5つの実践テクニック",
-            "初回訪問で顧客の信頼を掴む見積もりプレゼン術",
-            "塗装見積もりで「高い」と言われたときの対処法",
-            "リフォーム見積もり作成時間を半分にする方法",
-            "塗装面積の計測ミスを防ぐためのチェックポイント",
-        ],
-    },
-    "comparison": {
-        "label": "比較記事",
-        "topics": [
-            "手書き vs Excel vs AI：塗装見積もりツール徹底比較",
-            "見積もりソフト導入前後で何が変わる？現場の声を分析",
-            "大手塗装会社 vs 地域密着型：見積もり戦略の違い",
-            "塗装見積もりの「値引き交渉」を減らすための価格提示法",
-            "顧客満足度が高い見積もり書の特徴とは",
-        ],
-    },
-    "case_study": {
-        "label": "事例紹介",
-        "topics": [
-            "見積もり自動化で月20時間の工数削減を実現した塗装会社の事例",
-            "受注率30%アップを達成した塗装リフォーム会社の取り組み",
-            "3人の会社がAI見積もりで大手と競争できるようになった話",
-            "顧客の要望をそのまま見積もりに反映する仕組みづくり",
-            "見積もり提出スピードを上げて成約率を改善した方法",
-        ],
-    },
-    "trend": {
-        "label": "トレンド",
-        "topics": [
-            "2026年の住宅塗装業界で起きているDX化の波",
-            "AIが変える塗装リフォームの未来：自動見積もりから施工管理まで",
-            "住宅リフォーム市場の成長と塗装業者に求められる変化",
-            "デジタル化が進む住宅メンテナンス市場の最新動向",
-            "お客様が求める「見える化」と塗装業界の対応",
-        ],
-    },
-    "qa": {
-        "label": "Q&A",
-        "topics": [
-            "住宅塗装の見積もりに関するよくある質問10選",
-            "塗装見積もりソフトの導入でよく聞かれる疑問に回答",
-            "お客様から「なぜこの金額？」と聞かれたときの説明術",
-            "塗装見積もりの「坪単価」と「平米単価」どちらが正しい？",
-            "外壁塗装の見積もり項目：何を含めるべき？完全ガイド",
-        ],
-    },
-    "checklist": {
-        "label": "チェックリスト",
-        "topics": [
-            "住宅塗装見積もり作成前の現場調査チェックリスト",
-            "見積もり書に入れるべき項目チェックリスト【完全版】",
-            "塗装リフォーム営業の初回訪問チェックリスト",
-            "見積もり提出前の最終確認チェックリスト",
-            "塗装会社のIT化チェックリスト：最初にやるべき5つ",
-        ],
-    },
-    "glossary": {
-        "label": "用語解説",
-        "topics": [
-            "住宅塗装の見積もりで使われる専門用語を解説",
-            "外壁塗装の塗料グレードと価格帯の基礎知識",
-            "リフォーム見積もりの「諸経費」とは何か：内訳を解説",
-            "塗装面積の計算方法：壁面積・屋根面積の求め方",
-            "塗装見積もりの「下地処理」項目を正しく理解する",
-        ],
-    },
-    "management": {
-        "label": "経営者向け",
-        "topics": [
-            "塗装会社の利益率を改善する見積もり戦略",
-            "小規模塗装会社がIT投資で得られる3つのメリット",
-            "塗装業の経営者が知っておくべきDX補助金制度",
-            "見積もり業務の属人化リスクと解消方法",
-            "塗装会社の成長を加速させるデータ活用のすすめ",
-        ],
-    },
-    "seo_longtail": {
-        "label": "SEOロングテール",
-        "topics": [
-            "外壁塗装の見積もりが遅い？スピード改善の方法",
-            "塗装リフォームの見積もり比較：失敗しない選び方",
-            "住宅塗装の見積もり金額の相場と適正価格の見極め方",
-            "塗装見積もりを早く正確に作るコツ【現場プロ直伝】",
-            "リフォーム見積もりをデジタル化するメリットと注意点",
-        ],
-    },
+# 10 universal category types (labels are generated dynamically per market)
+CATEGORY_KEYS = [
+    "industry_challenges",
+    "howto",
+    "comparison",
+    "case_study",
+    "trend",
+    "qa",
+    "checklist",
+    "glossary",
+    "management",
+    "seo_longtail",
+]
+
+CATEGORY_LABELS_DEFAULT = {
+    "industry_challenges": "業界課題解説",
+    "howto": "ハウツー",
+    "comparison": "比較記事",
+    "case_study": "事例紹介",
+    "trend": "トレンド",
+    "qa": "Q&A",
+    "checklist": "チェックリスト",
+    "glossary": "用語解説",
+    "management": "経営者向け",
+    "seo_longtail": "SEOロングテール",
 }
+
+
+def _generate_topics(market_name: str, payer: str, offers: list[dict]) -> dict:
+    """Generate market-specific topics via AI. Returns {cat_key: {label, topics[]}}."""
+    offers_text = ""
+    for i, o in enumerate(offers[:3], 1):
+        offers_text += f"  {i}. {o.get('offer_name', '')} — {o.get('deliverable', '')}\n"
+
+    prompt = f"""以下の事業に最適な、SEOブログ記事のトピック案を生成してください。
+
+## 事業情報
+- 事業名: {market_name}
+- ターゲット顧客: {payer or '経営者・意思決定者'}
+- 提供サービス:
+{offers_text or '  （AI業務自動化SaaS）'}
+
+## 要件
+10カテゴリ × 5トピック = 合計50トピックを生成してください。
+各トピックはSEOで上位表示を狙える、具体的で実用的なタイトル案にしてください。
+ターゲット顧客が検索しそうなキーワードを自然に含めてください。
+
+## カテゴリ一覧（各5トピック）
+1. industry_challenges — 業界の課題や問題点を解説
+2. howto — 実践的なノウハウ・テクニック
+3. comparison — ツール比較・手法比較
+4. case_study — 導入事例・成功事例（架空の固有名詞は不可）
+5. trend — 業界トレンド・最新動向
+6. qa — よくある質問・Q&A
+7. checklist — チェックリスト・手順書
+8. glossary — 専門用語・基礎知識の解説
+9. management — 経営者・意思決定者向けの記事
+10. seo_longtail — ロングテールSEO狙いの記事
+
+## 出力形式
+JSONオブジェクトで返してください:
+{{
+  "industry_challenges": {{
+    "label": "（この事業に合ったカテゴリ表示名）",
+    "topics": ["トピック1", "トピック2", "トピック3", "トピック4", "トピック5"]
+  }},
+  "howto": {{
+    "label": "...",
+    "topics": ["...", "...", "...", "...", "..."]
+  }},
+  ...（10カテゴリすべて）
+}}"""
+
+    logger.info("Generating market-specific topics via AI...")
+    result = generate_json_with_retry(
+        prompt=prompt,
+        system="あなたはBtoB SEOストラテジストです。指定のJSONフォーマットで正確に出力してください。",
+        max_tokens=8192,
+        temperature=0.7,
+        max_retries=3,
+    )
+
+    if isinstance(result, list):
+        result = result[0] if result else {}
+
+    # Validate: ensure all 10 categories with 5 topics each
+    validated = {}
+    for key in CATEGORY_KEYS:
+        cat = result.get(key, {})
+        if not isinstance(cat, dict):
+            cat = {}
+        label = cat.get("label", CATEGORY_LABELS_DEFAULT.get(key, key))
+        topics = cat.get("topics", [])
+        if not isinstance(topics, list) or len(topics) < 5:
+            logger.warning(f"Category '{key}' has {len(topics) if isinstance(topics, list) else 0} topics, padding with defaults")
+            # Pad with generic topics
+            while len(topics) < 5:
+                topics.append(f"{market_name}における{label}の重要ポイント（{len(topics)+1}）")
+        validated[key] = {"label": label, "topics": topics[:5]}
+
+    total = sum(len(v["topics"]) for v in validated.values())
+    logger.info(f"Generated {total} topics across {len(validated)} categories")
+    return validated
+
+
+def _assign_cover_images(business_id: str, media_id: str) -> int:
+    """Auto-assign cover images from Supabase Storage pool to posts without images."""
+    try:
+        from supabase import create_client
+
+        # Load Supabase credentials
+        env_path = Path(__file__).resolve().parent.parent / "lp-app" / ".env.local"
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    os.environ.setdefault(key.strip(), val.strip())
+
+        url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        if not url or not key:
+            logger.warning("Supabase credentials not available for cover image assignment")
+            return 0
+
+        client = create_client(url, key)
+
+        # List available eyecatch images from storage
+        bucket = client.storage.from_("blog-images")
+        files = bucket.list("eyecatch")
+        if not files:
+            logger.info("No eyecatch images in storage pool")
+            return 0
+
+        image_urls = [
+            f"{url}/storage/v1/object/public/blog-images/eyecatch/{f['name']}"
+            for f in files
+            if f.get("name") and not f["name"].startswith(".")
+        ]
+        if not image_urls:
+            return 0
+
+        logger.info(f"Found {len(image_urls)} eyecatch images in pool")
+
+        # Get posts without cover_image for this business
+        result = (
+            client.table("posts")
+            .select("id, slug, cover_image")
+            .eq("business_id", business_id)
+            .eq("media_id", media_id)
+            .eq("status", "published")
+            .order("published_at", desc=False)
+            .execute()
+        )
+        posts = result.data or []
+        needs_image = [p for p in posts if not p.get("cover_image")]
+
+        if not needs_image:
+            logger.info("All posts already have cover images")
+            return 0
+
+        # Shuffle images for variety
+        random.seed(hash(business_id) % (2**31))
+        random.shuffle(image_urls)
+
+        updated = 0
+        for i, post in enumerate(needs_image):
+            img_url = image_urls[i % len(image_urls)]
+            try:
+                client.table("posts").update({"cover_image": img_url}).eq("id", post["id"]).execute()
+                updated += 1
+            except Exception as e:
+                logger.warning(f"Failed to assign image to {post['slug']}: {e}")
+
+        logger.info(f"Assigned cover images to {updated}/{len(needs_image)} posts")
+        return updated
+
+    except Exception as e:
+        logger.warning(f"Cover image assignment failed: {e}")
+        return 0
 
 
 def _get_market_info(business_id: str) -> dict:
@@ -164,8 +246,18 @@ def _try_supabase_upsert(post_data: dict) -> bool:
 
 
 def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int:
-    """Generate all blog articles for a business."""
-    # Ensure business is registered in businesses table (auto-generates slug)
+    """Generate all blog articles for a business.
+
+    Full flow:
+    1. Register business in Supabase (auto-generates slug)
+    2. Generate market-specific topics via AI
+    3. Generate 50 articles (10 categories x 5)
+    4. Auto-assign cover images from Supabase Storage pool
+    5. Send Slack notification with blog URL
+
+    Returns the number of articles generated.
+    """
+    # Step 1: Ensure business is registered
     try:
         from utils.supabase_client import ensure_business
         biz = ensure_business(business_id)
@@ -178,6 +270,13 @@ def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int
 
     market = _get_market_info(business_id)
     lp_url = f"{LP_BASE_URL}/lp/{quote(business_id, safe='')}"
+
+    # Step 2: Generate market-specific topics
+    topics_map = _generate_topics(
+        market_name=market["name"],
+        payer=market.get("payer", ""),
+        offers=market.get("offers", []),
+    )
 
     template = jinja_env.get_template("blog_prompt.j2")
 
@@ -192,18 +291,22 @@ def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int
         existing_slugs = {r.get("slug", "") for r in existing}
         logger.info(f"Loaded {len(existing_slugs)} existing slugs from Sheets")
 
+    # Step 3: Generate articles
     total_generated = 0
     now_base = datetime.now()
     article_index = 0
 
-    for cat_key, cat_info in ARTICLE_TOPICS.items():
-        for topic in cat_info["topics"]:
+    for cat_key in CATEGORY_KEYS:
+        cat_info = topics_map.get(cat_key, {})
+        if not cat_info:
+            continue
+        for topic in cat_info.get("topics", []):
             article_index += 1
             logger.info(f"[{article_index}/50] Generating: {topic[:40]}...")
 
             prompt = template.render(
                 name=market["name"],
-                target_audience=market.get("payer", "塗装業の経営者"),
+                target_audience=market.get("payer", "経営者・意思決定者"),
                 lp_url=lp_url,
                 category=cat_info["label"],
                 topic=topic,
@@ -283,6 +386,27 @@ def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int
             except Exception as e:
                 logger.error(f"Failed to generate article '{topic[:30]}': {e}")
                 continue
+
+    # Step 4: Auto-assign cover images
+    if total_generated > 0:
+        img_count = _assign_cover_images(business_id, media_id)
+        logger.info(f"Cover images assigned: {img_count}")
+
+    # Step 5: Slack notification
+    if total_generated > 0:
+        blog_url = LP_BASE_URL
+        try:
+            from utils.supabase_client import get_client
+            res = get_client().table("businesses").select("slug").eq("business_id", business_id).single().execute()
+            if res.data:
+                blog_url = f"{LP_BASE_URL}/{res.data['slug']}"
+        except Exception:
+            pass
+        slack_notify(
+            f":page_facing_up: ブログ記事を *{total_generated}件* 自動生成しました\n"
+            f"事業: {business_id[:30]}\n"
+            f"ブログ: {blog_url}"
+        )
 
     return total_generated
 
@@ -489,8 +613,9 @@ def main():
         total = generate_articles(business_id=args.business_id, media_id=args.media_id)
 
     logger.info(f"=== Blog generator complete: {total} articles generated ===")
-    if total > 0:
-        blog_url = f"{LP_BASE_URL}"
+    # SEO mode notification (generate_articles already has built-in Slack notification)
+    if total > 0 and args.seo_mode:
+        blog_url = LP_BASE_URL
         try:
             from utils.supabase_client import get_client
             res = get_client().table("businesses").select("slug").eq("business_id", args.business_id).single().execute()
@@ -498,9 +623,8 @@ def main():
                 blog_url = f"{LP_BASE_URL}/{res.data['slug']}"
         except Exception:
             pass
-        mode_str = "SEO" if args.seo_mode else "標準"
         slack_notify(
-            f":page_facing_up: ブログ記事を *{total}件* 生成しました ({mode_str})\n"
+            f":page_facing_up: SEOブログ記事を *{total}件* 生成しました\n"
             f"事業: {args.business_id[:30]}\n"
             f"ブログ: {blog_url}"
         )

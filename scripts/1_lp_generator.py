@@ -257,6 +257,7 @@ def main():
         learning_context = get_learning_context(categories=["lp_optimization"])
 
         generated_count = 0
+        blog_markets: list[str] = []  # Track markets that need blog generation
         for market in ready_markets:
             rid = market["run_id"]
             market_name = market["name"]
@@ -273,6 +274,7 @@ def main():
                 save_lp_content(business_id, lp_data)
                 record_to_sheets(business_id, lp_data)
                 generated_count += 1
+                blog_markets.append(business_id)
             except Exception as e:
                 logger.error(f"Failed to generate LP for {market_name}: {e}", exc_info=True)
                 continue
@@ -280,8 +282,30 @@ def main():
         if generated_count > 0:
             slack_notify(f":rocket: LP を *{generated_count}件* 自動生成しました。数分以内に自動公開されます。")
 
-        update_status("1_lp_generator", "success", f"{generated_count}件生成", {"lps_generated": generated_count})
-        logger.info(f"=== LP generator complete: {generated_count} LPs generated ===")
+        # --- Auto-trigger blog generation for new LPs ---
+        blog_count = 0
+        for business_id in blog_markets:
+            try:
+                update_status("1_lp_generator", "running", f"ブログ生成中: {business_id[:20]}")
+                logger.info(f"Triggering blog generation for: {business_id}")
+                from blog_generator import generate_articles
+                articles = generate_articles(business_id=business_id)
+                blog_count += articles
+                logger.info(f"Blog generation complete: {articles} articles for {business_id}")
+            except Exception as e:
+                logger.error(f"Blog generation failed for {business_id}: {e}", exc_info=True)
+                # Blog failure should NOT break LP pipeline
+                continue
+
+        total_info = f"LP {generated_count}件"
+        if blog_count > 0:
+            total_info += f" + ブログ {blog_count}件"
+
+        update_status("1_lp_generator", "success", total_info, {
+            "lps_generated": generated_count,
+            "blog_articles_generated": blog_count,
+        })
+        logger.info(f"=== LP generator complete: {generated_count} LPs, {blog_count} blog articles ===")
     except Exception as e:
         update_status("1_lp_generator", "error", str(e))
         logger.error(f"LP generator failed: {e}")
