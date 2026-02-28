@@ -43,6 +43,10 @@ TASK_PATTERNS: list[tuple[str, re.Pattern]] = [
         r"実行|走らせ|run|execute|パイプライン.*開始|起動",
         re.IGNORECASE,
     )),
+    ("blog_sns", re.compile(
+        r"ブログ|blog|記事.*生成|SNS|sns|投稿|ポスト|Twitter|twitter|LinkedIn|linkedin|バッチ生成",
+        re.IGNORECASE,
+    )),
 ]
 
 # Sensible turn limits per task type
@@ -52,6 +56,7 @@ MAX_TURNS_MAP: dict[str, int] = {
     "code_read": 5,
     "health_check": 10,
     "pipeline_execute": 8,
+    "blog_sns": 10,
     "general": 15,
 }
 
@@ -92,6 +97,16 @@ TASK_PREAMBLES: dict[str, str] = {
         "2. get_execution_status で完了を確認\n"
         "3. read_logs で実行結果を確認\n"
         "4. 結果を報告\n\n"
+        "ユーザーの指示:\n"
+    ),
+    "blog_sns": (
+        "ブログ・SNS関連タスクを実行してください。\n"
+        "利用可能なジョブ:\n"
+        "- blog_generator: ブログ50記事生成（LP生成時にも自動トリガーされる）\n"
+        "- sns_batch_generator: SNS100投稿バッチ生成（sns_queueに格納）\n"
+        "- sns_scheduled_poster: sns_queueから自動投稿（毎日10:00/18:00に自動実行）\n"
+        "- 2_sns_poster: リアルタイムSNS投稿\n"
+        "確認用シート: blog_articles（記事）, sns_queue（投稿キュー）\n\n"
         "ユーザーの指示:\n"
     ),
 }

@@ -142,8 +142,11 @@ _RAW_DEFINITIONS = [
             "Each script has its own Cloud Run Job. "
             "Available scripts and their jobs: "
             "orchestrate_v2 (orchestrate-v2), "
-            "1_lp_generator (lp-generator), "
-            "2_sns_poster (sns-poster), "
+            "1_lp_generator (lp-generator — LP生成+ブログ自動トリガー), "
+            "blog_generator (blog-generator — ブログ50記事生成、単体実行も可能), "
+            "2_sns_poster (sns-poster — リアルタイムSNS投稿), "
+            "sns_batch_generator (sns-batch-generator — SNS100投稿バッチ生成→sns_queue), "
+            "sns_scheduled_poster (sns-scheduled-poster — sns_queueから毎日自動投稿), "
             "3_form_sales (form-sales), "
             "4_analytics_reporter (analytics-reporter), "
             "5_slack_reporter (slack-reporter), "
@@ -159,6 +162,8 @@ _RAW_DEFINITIONS = [
                     "description": (
                         "Script key from the V2 pipeline dispatcher. "
                         "Examples: 'orchestrate_v2', '1_lp_generator', "
+                        "'blog_generator', 'sns_batch_generator', "
+                        "'sns_scheduled_poster', '2_sns_poster', "
                         "'7_learning_engine', '9_expansion_engine'."
                     ),
                 },
