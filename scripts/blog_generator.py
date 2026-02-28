@@ -295,6 +295,8 @@ def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int
     total_generated = 0
     now_base = datetime.now()
     article_index = 0
+    # Spread published_at over the past 30 days (not future) so articles are immediately visible
+    total_articles = 50
 
     for cat_key in CATEGORY_KEYS:
         cat_info = topics_map.get(cat_key, {})
@@ -328,8 +330,10 @@ def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int
                 if not slug or slug in existing_slugs:
                     slug = f"article-{uuid.uuid4().hex[:8]}"
 
-                # Stagger published_at (1 per hour for SEO drip)
-                published_at = (now_base + timedelta(hours=article_index)).isoformat()
+                # Spread published_at over the past 30 days so articles are immediately visible
+                # Article 1 = 30 days ago, Article 50 = now (oldest first for natural SEO)
+                days_back = 30 * (1 - article_index / max(total_articles, 1))
+                published_at = (now_base - timedelta(days=days_back)).isoformat()
                 generated_at = now_base.isoformat()
 
                 tags = result.get("tags", [])
@@ -532,7 +536,8 @@ def generate_seo_articles(
             if not slug or slug in existing_slugs:
                 slug = f"seo-{uuid.uuid4().hex[:8]}"
 
-            published_at = (now_base + timedelta(hours=total + 1)).isoformat()
+            days_back = max(max_articles - total, 1)
+            published_at = (now_base - timedelta(days=days_back)).isoformat()
 
             tags = result.get("tags", [])
             if not isinstance(tags, list):
