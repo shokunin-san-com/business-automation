@@ -12,6 +12,7 @@ export interface BlogArticle {
   meta_description: string;
   og_title: string;
   og_description: string;
+  cover_image: string;
   status: "draft" | "published";
   has_affiliate: boolean;
   author_id?: string | null;

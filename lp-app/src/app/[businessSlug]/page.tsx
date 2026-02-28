@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAllArticles, getAllCategories } from "@/lib/blog-data";
@@ -41,11 +42,21 @@ function PostCard({ article, basePath }: { article: BlogArticleSummary; basePath
   return (
     <article className="group relative flex overflow-hidden rounded-xl bg-white border border-gray-100 transition-all duration-200 hover:border-blue-200 hover:shadow-sm">
       <div className="relative w-32 flex-shrink-0 overflow-hidden sm:w-40 bg-gradient-to-br from-blue-50 to-slate-50">
-        <div className="flex h-full w-full items-center justify-center">
-          <svg className="h-7 w-7 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1} aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
-          </svg>
-        </div>
+        {article.cover_image ? (
+          <Image
+            src={article.cover_image}
+            alt=""
+            fill
+            sizes="160px"
+            className="object-cover transition-transform duration-300 group-hover:scale-105"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <svg className="h-7 w-7 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+            </svg>
+          </div>
+        )}
       </div>
       <div className="flex flex-1 flex-col justify-center px-5 py-4">
         <div className="mb-1.5 flex items-center gap-2">
@@ -87,11 +98,22 @@ function FeaturedCard({ article, basePath }: { article: BlogArticleSummary; base
   return (
     <article className="group relative overflow-hidden rounded-xl bg-white border border-gray-100 transition-all duration-200 hover:border-blue-200 hover:shadow-sm">
       <div className="relative aspect-[2.2/1] overflow-hidden bg-gradient-to-br from-blue-50 to-slate-100">
-        <div className="flex h-full w-full items-center justify-center">
-          <svg className="h-12 w-12 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8} aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
-          </svg>
-        </div>
+        {article.cover_image ? (
+          <Image
+            src={article.cover_image}
+            alt=""
+            fill
+            sizes="(max-width: 768px) 100vw, 66vw"
+            className="object-cover transition-transform duration-300 group-hover:scale-105"
+            priority
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <svg className="h-12 w-12 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+            </svg>
+          </div>
+        )}
       </div>
       <div className="p-6 sm:p-8">
         <div className="mb-3 flex items-center gap-3">
@@ -191,11 +213,15 @@ function Sidebar({
               <li key={post.id}>
                 <Link href={`${basePath}/${encodeURIComponent(post.slug)}`} className="group flex gap-3">
                   <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-50">
-                    <div className="flex h-full w-full items-center justify-center">
-                      <svg className="h-3.5 w-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
-                      </svg>
-                    </div>
+                    {post.cover_image ? (
+                      <Image src={post.cover_image} alt="" fill sizes="48px" className="object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <svg className="h-3.5 w-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+                        </svg>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-1 flex-col justify-center">
                     <span className="line-clamp-2 text-[12px] font-medium leading-snug text-gray-600 transition-colors group-hover:text-blue-600">

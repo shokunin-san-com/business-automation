@@ -21,7 +21,7 @@ async function getSupabase() {
 
 /** Columns to select for article listings (no body) */
 const SUMMARY_COLUMNS =
-  "id, business_id, media_id, title, slug, excerpt, category, tags, meta_description, og_title, og_description, status, has_affiliate, published_at, generated_at, created_at, updated_at";
+  "id, business_id, media_id, title, slug, excerpt, category, tags, meta_description, og_title, og_description, cover_image, status, has_affiliate, published_at, generated_at, created_at, updated_at";
 
 /** Columns to select for full article */
 const FULL_COLUMNS = `${SUMMARY_COLUMNS}, body_html, body_json, author_id`;
@@ -202,6 +202,7 @@ function mapRow(row: Record<string, unknown>): BlogArticle {
     meta_description: String(row.meta_description || ""),
     og_title: String(row.og_title || row.title || ""),
     og_description: String(row.og_description || row.meta_description || ""),
+    cover_image: String(row.cover_image || ""),
     status: row.status === "published" ? "published" : "draft",
     has_affiliate: Boolean(row.has_affiliate),
     author_id: row.author_id ? String(row.author_id) : null,
@@ -225,6 +226,7 @@ function mapSummaryRow(row: Record<string, unknown>): BlogArticleSummary {
     meta_description: String(row.meta_description || ""),
     og_title: String(row.og_title || row.title || ""),
     og_description: String(row.og_description || row.meta_description || ""),
+    cover_image: String(row.cover_image || ""),
     status: row.status === "published" ? "published" : "draft",
     has_affiliate: Boolean(row.has_affiliate),
     author_id: row.author_id ? String(row.author_id) : null,

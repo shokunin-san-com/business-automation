@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -235,6 +236,20 @@ export default async function ArticlePage({
               )}
             </div>
 
+            {/* Cover Image */}
+            {article.cover_image && (
+              <div className="relative mb-10 aspect-[2/1] overflow-hidden rounded-xl">
+                <Image
+                  src={article.cover_image}
+                  alt={article.title}
+                  fill
+                  sizes="(max-width: 768px) 100vw, 66vw"
+                  className="object-cover"
+                  priority
+                />
+              </div>
+            )}
+
             {/* Article Body */}
             <div
               className="
@@ -268,11 +283,15 @@ export default async function ArticlePage({
                       className="group flex gap-3 rounded-xl border border-gray-100 bg-white p-4 transition-colors hover:border-blue-200"
                     >
                       <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-50">
-                        <div className="flex h-full w-full items-center justify-center">
-                          <svg className="h-4 w-4 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
-                          </svg>
-                        </div>
+                        {r.cover_image ? (
+                          <Image src={r.cover_image} alt="" fill sizes="64px" className="object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center">
+                            <svg className="h-4 w-4 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+                            </svg>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-1 flex-col justify-center">
                         <span className="line-clamp-2 text-[13px] font-medium leading-snug text-gray-600 transition-colors group-hover:text-blue-600">
@@ -313,11 +332,15 @@ export default async function ArticlePage({
                       <li key={rp.id}>
                         <Link href={`${basePath}/${encodeURIComponent(rp.slug)}`} className="group flex gap-3">
                           <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-50">
-                            <div className="flex h-full w-full items-center justify-center">
-                              <svg className="h-3.5 w-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
-                              </svg>
-                            </div>
+                            {rp.cover_image ? (
+                              <Image src={rp.cover_image} alt="" fill sizes="48px" className="object-cover" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <svg className="h-3.5 w-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 002.25-2.25V5.25a2.25 2.25 0 00-2.25-2.25H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+                                </svg>
+                              </div>
+                            )}
                           </div>
                           <div className="flex flex-1 flex-col justify-center">
                             <span className="line-clamp-2 text-[12px] font-medium leading-snug text-gray-600 transition-colors group-hover:text-blue-600">
