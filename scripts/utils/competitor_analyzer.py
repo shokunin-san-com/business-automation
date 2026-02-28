@@ -79,9 +79,12 @@ def _assess_win_strategy(market_name: str, competitors: list[dict]) -> dict:
         ensure_ascii=False,
     )
 
+    from utils.exploration_engine import CONSTRUCTION_CONTEXT
+
     prompt = template.render(
         market_name=market_name,
         competitors_json=comp_summary,
+        construction_context=CONSTRUCTION_CONTEXT,
     )
 
     result = generate_json_with_retry(

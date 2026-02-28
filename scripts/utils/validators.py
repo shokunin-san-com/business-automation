@@ -407,6 +407,7 @@ def validate_business_model_types(
 # ---------------------------------------------------------------------------
 COMBO_REQUIRED_FIELDS = [
     "business_name", "target", "deliverable", "price_model", "monthly_300_path",
+    "why_pay", "who_pays_now", "switching_reason",
 ]
 
 
@@ -653,6 +654,8 @@ def validate_competitor_20(data: list | dict) -> ValidationResult:
 OFFER_REQUIRED_FIELDS = [
     "payer", "offer_name", "deliverable",
     "time_to_value", "price", "replaces", "upsell",
+    "headline", "pain_statement", "delivery_flow",
+    "price_justification", "churn_risk", "monthly_300_calc",
 ]
 
 
@@ -678,6 +681,38 @@ def validate_offer_3(data: list | dict) -> ValidationResult:
             val = item.get(fname)
             if val is None or (isinstance(val, str) and not val.strip()):
                 errors.append(f"オファー[{i}]: 必須フィールド '{fname}' が空")
+
+    return ValidationResult(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3-Stage Filter Result validation
+# ---------------------------------------------------------------------------
+
+def validate_three_stage_result(data: list | dict) -> ValidationResult:
+    """Validate 3-stage filter output (review_pass + exists_check)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or len(data) == 0:
+        return ValidationResult(valid=False, errors=["空の結果または不正な型"])
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"アイテム[{i}]: dict型ではありません")
+            continue
+
+        if "review_pass" not in item:
+            warnings.append(f"アイテム[{i}]: review_pass フィールドなし")
+        if "exists_check" not in item:
+            warnings.append(f"アイテム[{i}]: exists_check フィールドなし")
 
     return ValidationResult(
         valid=len(errors) == 0,

@@ -7,20 +7,17 @@ interface Props {
 }
 
 export function KPICards({ data }: Props) {
-  const totalSns = data.activeBusinesses.reduce((s, b) => s + b.stats.snsPostCount, 0);
-  const totalForm = data.activeBusinesses.reduce((s, b) => s + b.stats.formSubmitCount, 0);
+  const totalEmailSent = data.activeBusinesses.reduce((s, b) => s + (b.stats.emailSentCount ?? 0), 0);
+  const totalEmailReplied = data.activeBusinesses.reduce((s, b) => s + (b.stats.emailRepliedCount ?? 0), 0);
+  const replyRate = totalEmailSent > 0 ? `${((totalEmailReplied / totalEmailSent) * 100).toFixed(0)}%` : "0%";
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <KPICard label="アクティブ事業案" value={data.activeBusinesses.length} color="blue" />
+      <KPICard label="メール送信数" value={totalEmailSent} color="cyan" />
+      <KPICard label="メール返信数" value={totalEmailReplied} color="violet" />
       <KPICard label="問い合わせ" value={data.downstream?.totalInquiries ?? 0} color="orange" />
-      <KPICard
-        label="成約率"
-        value={data.downstream?.dealRate ? `${(data.downstream.dealRate * 100).toFixed(0)}%` : "0%"}
-        color="emerald"
-      />
-      <KPICard label="SNS投稿" value={totalSns} color="cyan" />
-      <KPICard label="フォーム送信" value={totalForm} color="violet" />
+      <KPICard label="返信率" value={replyRate} color="emerald" />
       <KPICard label="勝ちパターン" value={data.expansion?.activePatterns ?? 0} color="pink" />
     </div>
   );

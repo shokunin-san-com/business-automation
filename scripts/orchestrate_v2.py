@@ -46,13 +46,17 @@ from utils.slack_notifier import send_message as notify
 from utils.status_writer import update_status
 
 # --- New v2 modules ---
-from utils.exploration_engine import load_ceo_constraints, run_layer1, run_layer2
+from utils.exploration_engine import (
+    load_ceo_constraints, run_layer1, run_layer2, CONSTRUCTION_CONTEXT,
+)
 from utils.demand_verifier import verify_batch as demand_verify_batch
 from utils.competitor_analyzer import analyze_competitors
 from utils.email_target_collector import collect_emails
 from utils.email_sender import submit_for_approval
 from utils.cost_tracker import check_budget_gate, record_api_call
 from utils.slug_generator import generate_slug
+from utils.three_stage_filter import apply_three_stage_gate
+from utils.strength_matcher import match_strength
 
 # --- Existing modules still used ---
 from A_market_research import save_settings_snapshot
@@ -126,6 +130,32 @@ def _budget_check(steps: list[dict], run_id: str, start_time: float) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Offer self-review (v3: programmatic prohibited term check)
+# ---------------------------------------------------------------------------
+
+PROHIBITED_OFFER_TERMS = [
+    "AI", "人工知能", "機械学習", "SaaS", "プラットフォーム",
+    "最適化", "効率化", "支援", "ソリューション", "DX推進",
+]
+
+
+def self_review_offers(offers: list[dict]) -> list[dict]:
+    """Programmatic offer self-review. Check for prohibited terms."""
+    reviewed = []
+    for offer in offers:
+        text = json.dumps(offer, ensure_ascii=False)
+        violations = [t for t in PROHIBITED_OFFER_TERMS if t in text]
+        offer["self_review_pass"] = len(violations) == 0
+        offer["self_review_violations"] = violations
+        if violations:
+            logger.warning(
+                f"オファー「{offer.get('offer_name', '?')}」禁止語検出: {violations}"
+            )
+        reviewed.append(offer)
+    return reviewed
+
+
+# ---------------------------------------------------------------------------
 # Offer generation
 # ---------------------------------------------------------------------------
 
@@ -160,6 +190,7 @@ def _generate_combo_offers(
         gate_result_json=json.dumps({}, ensure_ascii=False),
         knowledge_context=knowledge_context,
         learning_context=learning_context,
+        construction_context=CONSTRUCTION_CONTEXT,
     )
 
     offers = generate_json_with_retry(
@@ -401,8 +432,27 @@ def main():
                 _abort_pipeline(steps, run_id, start_time)
                 return
 
+            # v3: 3-stage filter on Layer 1 types
+            raw_count = len(all_types)
+            all_types, failed_types = apply_three_stage_gate(
+                all_types, "layer1_type", CONSTRUCTION_CONTEXT,
+            )
+            logger.info(f"Layer1 3-stage: {raw_count} → {len(all_types)} PASS")
+
+            if not all_types:
+                steps.append(_make_step_result("A: Layer1型生成", STEP_FAIL,
+                                               errors=[f"3段階フィルタで全{raw_count}型除外"]))
+                _abort_pipeline(steps, run_id, start_time)
+                return
+
+            # v3: Strength matching for each type
+            ceo_profile = settings.get("ceo_profile_json", "")
+            for t in all_types:
+                t["strength_fit"] = match_strength(t, ceo_profile)
+
             steps.append(_make_step_result("A: Layer1型生成", STEP_OK,
                                            count=len(all_types),
+                                           warnings=[f"3段階フィルタ: {raw_count}→{len(all_types)}型"],
                                            data=all_types))
         except Exception as e:
             steps.append(_make_step_result("A: Layer1型生成", STEP_FAIL,
@@ -433,8 +483,22 @@ def main():
                 _abort_pipeline(steps, run_id, start_time)
                 return
 
+            # v3: 3-stage filter on Layer 2 combos
+            raw_combo_count = len(all_combos)
+            all_combos, failed_combos = apply_three_stage_gate(
+                all_combos, "layer2_combo", CONSTRUCTION_CONTEXT,
+            )
+            logger.info(f"Layer2 3-stage: {raw_combo_count} → {len(all_combos)} PASS")
+
+            if not all_combos:
+                steps.append(_make_step_result("B: Layer2コンボ", STEP_FAIL,
+                                               errors=[f"3段階フィルタで全{raw_combo_count}コンボ除外"]))
+                _abort_pipeline(steps, run_id, start_time)
+                return
+
             steps.append(_make_step_result("B: Layer2コンボ", STEP_OK,
                                            count=len(all_combos),
+                                           warnings=[f"3段階フィルタ: {raw_combo_count}→{len(all_combos)}コンボ"],
                                            data=all_combos))
         except Exception as e:
             steps.append(_make_step_result("B: Layer2コンボ", STEP_FAIL,
@@ -510,17 +574,26 @@ def main():
                     )
 
                     status = result.get("status", "FAIL")
-                    if status == "PASS":
+                    fail_reason = result.get("fail_reason", "")
+
+                    # v3: Only competitor_zero = FAIL. NOT_WINNABLE is now PASS with warning
+                    if status == "FAIL" and "競合が見つからない" in fail_reason:
+                        logger.info(f"  D: {combo_name} → FAIL (競合ゼロ=市場なし)")
+                    else:
+                        # PASS or NOT_WINNABLE (both proceed)
+                        combo["strength_fit"] = match_strength(combo, ceo_profile)
                         d_pass_combos.append(combo)
                         win = result.get("win_assessment", {})
                         all_win_assessments.append({
                             "combo": combo,
                             "win_assessment": win,
                             "competitors": result.get("competitors", []),
+                            "strength_fit": combo.get("strength_fit", ""),
                         })
-                    else:
-                        reason = result.get("fail_reason", "unknown")
-                        logger.info(f"  D: {combo_name} → FAIL ({reason})")
+                        if status == "FAIL":
+                            logger.info(f"  D: {combo_name} → PASS（警告: {fail_reason}）")
+                        else:
+                            logger.info(f"  D: {combo_name} → PASS")
 
                     time.sleep(1.0)
                 except Exception as e:
@@ -575,6 +648,15 @@ def main():
                         gap_top3=combo_gaps,
                     )
 
+                    # v3: self-review offers (prohibited term check)
+                    offers = self_review_offers(offers)
+                    for o in offers:
+                        if not o.get("self_review_pass", True):
+                            logger.warning(
+                                f"  E: 禁止語検出 — {o.get('offer_name','?')}: "
+                                f"{o.get('self_review_violations', [])}"
+                            )
+
                     offer_rows = []
                     for offer in offers:
                         offer_rows.append([
@@ -587,6 +669,12 @@ def main():
                             offer.get("price", ""),
                             offer.get("replaces", ""),
                             offer.get("upsell", ""),
+                            offer.get("headline", ""),
+                            offer.get("pain_statement", ""),
+                            offer.get("delivery_flow", ""),
+                            offer.get("price_justification", ""),
+                            offer.get("churn_risk", ""),
+                            offer.get("monthly_300_calc", ""),
                         ])
                     if offer_rows:
                         append_rows("offer_3_log", offer_rows)

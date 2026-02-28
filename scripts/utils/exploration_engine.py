@@ -28,6 +28,20 @@ logger = get_logger("exploration_engine", "exploration_engine.log")
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
 # ---------------------------------------------------------------------------
+# Construction Industry Context (injected into all AI prompts)
+# ---------------------------------------------------------------------------
+CONSTRUCTION_CONTEXT = """
+【建設業界の商慣習】
+- 重層下請構造（元請→1次→2次→3次）。意思決定者は現場所長＋本社工事部長の二重構造
+- 予算は「工事ごと」に組まれ、月額サブスクの概念が薄い。出来高払い＋手形90日が標準
+- 職人は日給月給。雨天休業、季節変動あり。人材不足が最大の経営課題
+- 主要法規制：建設業法（許可・経審）、労働安全衛生法、建設リサイクル法、入管法（特定技能）
+- 金の動き：公共工事は年度末集中、民間は着工〜竣工1-2年。資金繰りが常に課題
+- IT導入：ANDPAD/Photoruction等は大手に普及済み。中小は紙+Excel+LINE+FAXが現役
+- 許認可ビジネス：有料職業紹介（建設は例外的に許可が必要）、特定技能、M&A登録支援
+""".strip()
+
+# ---------------------------------------------------------------------------
 # 5-Axis Prompt Definitions (20 prompts)
 # ---------------------------------------------------------------------------
 AXIS_PROMPTS = [
@@ -192,6 +206,7 @@ def _generate_types_for_prompt(
         knowledge_context=knowledge_context,
         existing_type_names=existing_str,
         target_count=prompt_def["target_count"],
+        construction_context=CONSTRUCTION_CONTEXT,
     )
 
     from utils.validators import validate_business_model_types
@@ -304,6 +319,9 @@ def _save_types_to_sheet(types: list[dict], run_id: str) -> int:
             t.get("revenue_model", ""),
             t.get("example", ""),
             merged_str,
+            str(t.get("review_pass", "")),
+            str(t.get("exists_check", "")),
+            t.get("strength_fit", ""),
             now,
         ])
     if rows:
@@ -407,6 +425,7 @@ def generate_combos_for_type(
         business_type_json=json.dumps(business_type, ensure_ascii=False),
         ceo_constraints_json=json.dumps(ceo_constraints, ensure_ascii=False),
         knowledge_context=knowledge_context,
+        construction_context=CONSTRUCTION_CONTEXT,
     )
 
     from utils.validators import validate_business_combos
@@ -467,6 +486,9 @@ def _save_combos_to_sheet(combos: list[dict], run_id: str) -> int:
             c.get("deliverable", ""),
             c.get("price_model", ""),
             c.get("monthly_300_path", ""),
+            c.get("why_pay", ""),
+            c.get("who_pays_now", ""),
+            c.get("switching_reason", ""),
             now,
         ])
     if rows:

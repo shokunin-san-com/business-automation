@@ -22,7 +22,7 @@ export async function generateMetadata({
   if (!business) return { title: "Not Found" };
 
   return {
-    title: `${business.display_name} ブログ | 職人さん.xyz`,
+    title: `${business.display_name} ブログ | 職人さんドットコム`,
     description: `${business.description || business.display_name}に関する最新情報をお届けします。`,
   };
 }

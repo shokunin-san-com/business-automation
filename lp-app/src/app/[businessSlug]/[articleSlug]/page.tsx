@@ -103,11 +103,11 @@ function JsonLd({
     datePublished: article.published_at,
     author: {
       "@type": "Organization",
-      name: "職人さん.xyz",
+      name: "職人さんドットコム",
     },
     publisher: {
       "@type": "Organization",
-      name: "職人さん.xyz",
+      name: "職人さんドットコム",
     },
     mainEntityOfPage: {
       "@type": "WebPage",

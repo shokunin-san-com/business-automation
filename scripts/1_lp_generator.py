@@ -163,6 +163,8 @@ def generate_lp_content(
         if len(seen_companies) >= 5:
             break
 
+    from utils.exploration_engine import CONSTRUCTION_CONTEXT
+
     template = jinja_env.get_template("lp_prompt.j2")
     prompt = template.render(
         name=market["name"],
@@ -171,11 +173,12 @@ def generate_lp_content(
         gaps_text=gaps_text,
         evidence_urls=market.get("evidence_urls", ""),
         blackout_hypothesis=market.get("blackout_hypothesis", ""),
-        company_name=YOUR_COMPANY_NAME,
+        company_name="職人さんドットコム",
         your_name=YOUR_NAME,
         your_email=YOUR_EMAIL,
         knowledge_context=knowledge_context,
         learning_context=learning_context,
+        construction_context=CONSTRUCTION_CONTEXT,
     )
 
     lp_data = generate_json_with_retry(

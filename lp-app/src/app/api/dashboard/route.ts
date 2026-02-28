@@ -422,6 +422,7 @@ export async function GET(request: NextRequest) {
         const blogArticles = await cachedGetAllRows("blog_articles");
         const inquiryRows = await cachedGetAllRows("inquiry_log");
         const dealRows = await cachedGetAllRows("deal_pipeline");
+        const mailSentRows = await cachedGetAllRows("mail_sent_log").catch(() => [] as Record<string, string>[]);
 
         for (const rid of readyRunIds) {
           const gate = gateRows.find((g) => g.run_id === rid && g.status === "PASS");
@@ -458,6 +459,12 @@ export async function GET(request: NextRequest) {
           const dealLostCount = dealRows.filter(
             (r) => (r.business_id === rid || r.run_id === rid) && r.stage === "lost",
           ).length;
+          const emailSentCount = mailSentRows.filter(
+            (r) => (r.business_id === rid || r.run_id === rid) && r.status === "sent",
+          ).length;
+          const emailRepliedCount = mailSentRows.filter(
+            (r) => (r.business_id === rid || r.run_id === rid) && r.status === "replied",
+          ).length;
 
           activeBusinesses.push({
             runId: rid,
@@ -476,6 +483,8 @@ export async function GET(request: NextRequest) {
               inquiryCount,
               dealWonCount,
               dealLostCount,
+              emailSentCount,
+              emailRepliedCount,
             },
           });
         }

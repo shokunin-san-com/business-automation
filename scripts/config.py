@@ -71,7 +71,7 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 GCHAT_WEBHOOK_URL = os.getenv("GCHAT_WEBHOOK_URL", "")
 
 # --- Gmail API ---
-GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "info02@shokunin-san.com")
+GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "inoue@shokunin-san.com")
 
 # --- Cost tracking ---
 COST_WARN_JPY = int(os.getenv("COST_WARN_JPY", "25000"))
@@ -79,8 +79,8 @@ COST_HARD_STOP_JPY = int(os.getenv("COST_HARD_STOP_JPY", "30000"))
 
 # --- Business ---
 YOUR_COMPANY_NAME = os.getenv("YOUR_COMPANY_NAME", "MarketProbe Project")
-YOUR_NAME = os.getenv("YOUR_NAME", "みゆ")
-YOUR_EMAIL = os.getenv("YOUR_EMAIL", "info02@shokunin-san.com")
+YOUR_NAME = os.getenv("YOUR_NAME", "岡部")
+YOUR_EMAIL = os.getenv("YOUR_EMAIL", "inoue@shokunin-san.com")
 
 # --- Logging ---
 LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"

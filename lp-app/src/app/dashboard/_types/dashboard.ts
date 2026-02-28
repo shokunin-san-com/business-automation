@@ -70,6 +70,8 @@ export interface ActiveBusiness {
     inquiryCount: number;
     dealWonCount: number;
     dealLostCount: number;
+    emailSentCount: number;
+    emailRepliedCount: number;
   };
 }
 

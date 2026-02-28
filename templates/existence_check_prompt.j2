@@ -1,0 +1,36 @@
+{# 3段階フィルタ Stage 3: 実在確認（Gemini grounding使用） #}
+{# Variables: items_json, item_type #}
+
+以下のアイテムについて、Google検索で実在性を確認してください。
+
+## 確認対象（{{ item_type }}）
+{{ items_json }}
+
+## 確認基準
+
+{% if item_type == "layer1_type" %}
+- この「型」に類似するサービスが日本で実際に提供されているか？
+- 類似サービスを提供している企業は実在するか？
+- exists=true: 類似サービスが1つ以上実在する
+- exists=false: 類似サービスが見つからない（新規概念の可能性）
+
+{% elif item_type == "layer2_combo" %}
+- このコンボが解決するニーズは実在するか？
+- 実際にこの種のサービスを提供/利用している企業はあるか？
+- exists=true: 類似ニーズ・サービスが実在する
+- exists=false: 該当ニーズ・サービスが見つからない
+
+{% elif item_type == "competitor_win" %}
+- この企業/サービスは実際に存在するか？
+- 公式サイトは稼働しているか？
+- exists=true: 企業/サービスが実在する
+- exists=false: 企業/サービスが確認できない
+{% endif %}
+
+## 出力形式（JSON配列）
+```json
+[
+  {"index": 0, "exists": true, "evidence": "○○株式会社が類似サービスを提供中（https://example.com）"},
+  {"index": 1, "exists": false, "evidence": "該当する日本のサービスは見つからなかった"}
+]
+```

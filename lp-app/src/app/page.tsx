@@ -20,7 +20,7 @@ export default async function Home() {
         {/* Header */}
         <div className="mb-12 text-center">
           <p className="text-[10px] tracking-[0.3em] text-gray-400 uppercase font-mono mb-4">
-            職人さん.xyz
+            職人さんドットコム
           </p>
           <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
             業界DXの最前線

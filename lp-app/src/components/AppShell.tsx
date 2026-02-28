@@ -8,8 +8,9 @@ const NAV_ITEMS = [
   { icon: "grid", label: "Dashboard", href: "/dashboard" },
   { icon: "zap", label: "Pipeline", href: "/dashboard?tab=pipeline" },
   { icon: "file", label: "LPs", href: "/" },
-  { icon: "lightbulb", label: "Ideas", href: "/ideas" },
-  { icon: "bar", label: "Analytics", href: "/analytics" },
+  { icon: "book", label: "Offers", href: "/offers" },
+  { icon: "bar", label: "Approval", href: "/approval" },
+  { icon: "lightbulb", label: "Explore", href: "/explore" },
   { icon: "settings", label: "Settings", href: "/settings" },
 ];
 

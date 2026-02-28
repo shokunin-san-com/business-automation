@@ -153,6 +153,12 @@ SHEETS = {
         "price",
         "replaces",
         "upsell",
+        "headline",
+        "pain_statement",
+        "delivery_flow",
+        "price_justification",
+        "churn_risk",
+        "monthly_300_calc",
     ],
     "lp_ready_log": [
         "run_id",
@@ -390,6 +396,9 @@ SHEETS = {
         "revenue_model",
         "example",
         "merged_from",
+        "review_pass",
+        "exists_check",
+        "strength_fit",
         "generated_at",
     ],
     "business_combos": [
@@ -401,6 +410,9 @@ SHEETS = {
         "deliverable",
         "price_model",
         "monthly_300_path",
+        "why_pay",
+        "who_pays_now",
+        "switching_reason",
         "generated_at",
     ],
     "search_volume_log": [
@@ -447,8 +459,8 @@ DEFAULT_SETTINGS = [
     ["kill_criteria_enabled", "true", "損切り判定の有効/無効"],
     ["monthly_ad_budget", "100000", "月間広告予算（円）"],
     ["ads_daily_budget", "3000", "広告自動出稿のデフォルト日次予算（円）"],
-    ["sender_name", "みゆ", "フォーム営業の送信者名"],
-    ["sender_email", "info02@shokunin-san.com", "フォーム営業の返信先メールアドレス"],
+    ["sender_name", "岡部", "フォーム営業の送信者名"],
+    ["sender_email", "inoue@shokunin-san.com", "フォーム営業の返信先メールアドレス"],
     ["sender_company", "MarketProbe Project", "フォーム営業で使用する会社名"],
     # orchestrator_auto_approve / auto_approve_n / min_score_threshold — v2で廃止（ゲート制に移行）
     ["pipeline_improvement_log", "", "自己反省の改善提案・リスク・次回アクション蓄積（最新5件）"],
@@ -457,7 +469,7 @@ DEFAULT_SETTINGS = [
     ["expansion_min_deal_rate", "0.1", "拡張判定に必要な最低成約率"],
     ["expansion_min_days", "14", "拡張判定に必要な最低運用日数"],
     # v2 追加設定
-    ["gmail_sender_email", "info02@shokunin-san.com", "Gmail API送信元アドレス"],
+    ["gmail_sender_email", "inoue@shokunin-san.com", "Gmail API送信元アドレス"],
     ["mail_daily_limit", "50", "1日あたりのメール送信上限"],
     ["cost_warn_jpy", "25000", "月間API費用の警告閾値（円）"],
     ["cost_hard_stop_jpy", "30000", "月間API費用の強制停止閾値（円）"],

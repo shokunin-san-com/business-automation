@@ -20,9 +20,14 @@
 {% endif %}
 
 ## 会社情報
-- 会社名: {{ company_name }}
+- 会社名: 職人さんドットコム
 - 担当者: {{ your_name }}
 - メール: {{ your_email }}
+
+{% if construction_context %}
+## 建設業界コンテキスト
+{{ construction_context }}
+{% endif %}
 
 {% if knowledge_context %}
 ## マーケティング・事業フレームワーク参考
