@@ -3,7 +3,7 @@ import { getAllLPSlugs } from "@/lib/lp-data";
 import { getAllArticleSlugs } from "@/lib/blog-data";
 import { getAllBusinesses } from "@/lib/business-data";
 
-const BASE_URL = "https://lp-app-pi.vercel.app";
+const BASE_URL = "https://shokunin-san.xyz";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const entries: MetadataRoute.Sitemap = [

@@ -417,7 +417,7 @@ export async function GET(request: NextRequest) {
             }));
 
           const bizLps = lpContent.filter((r) => r.business_id === rid);
-          const lpUrls = bizLps.map((r) => `https://lp-app-pi.vercel.app/lp/${encodeURIComponent(r.business_id)}`);
+          const lpUrls = bizLps.map((r) => `https://shokunin-san.xyz/lp/${encodeURIComponent(r.business_id)}`);
 
           const lpCountBiz = bizLps.length;
           const snsPostCount = snsPosts.filter((r) => r.business_id === rid).length;

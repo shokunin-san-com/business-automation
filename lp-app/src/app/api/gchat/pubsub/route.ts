@@ -269,7 +269,7 @@ async function handleChatAppEvent(event: ChatAppEvent): Promise<void> {
       const token = await getChatAccessToken();
       await postChatMessage(
         event.space.name,
-        "ボタンの操作はダッシュボードで行ってください: https://lp-app-pi.vercel.app/dashboard",
+        "ボタンの操作はダッシュボードで行ってください: https://shokunin-san.xyz/dashboard",
         undefined,
         token,
       );

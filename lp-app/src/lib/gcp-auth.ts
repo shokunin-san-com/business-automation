@@ -137,4 +137,16 @@ export const JOB_MAP: Record<string, { jobId: string; schedulers: string[] }> = 
     jobId: "expansion-engine",
     schedulers: ["schedule-expansion-engine"],
   },
+  blog_generator: {
+    jobId: "blog-generator",
+    schedulers: [],
+  },
+  sns_batch_generator: {
+    jobId: "sns-batch-generator",
+    schedulers: [],
+  },
+  sns_scheduled_poster: {
+    jobId: "sns-scheduled-poster",
+    schedulers: ["schedule-sns-morning", "schedule-sns-evening"],
+  },
 };

@@ -19,7 +19,7 @@ export const maxDuration = 120;
  * Setup:
  *   1. In GCP Console → "Chat API" → enable
  *   2. Create a Chat App with HTTP endpoint
- *   3. Set endpoint URL to: https://lp-app-pi.vercel.app/api/gchat/events
+ *   3. Set endpoint URL to: https://shokunin-san.xyz/api/gchat/events
  */
 
 // ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
   // CARD_CLICKED
   if (eventType === "CARD_CLICKED") {
     return legacyResponse(
-      "ボタンの操作はダッシュボードで行ってください: https://lp-app-pi.vercel.app/dashboard",
+      "ボタンの操作はダッシュボードで行ってください: https://shokunin-san.xyz/dashboard",
     );
   }
 
