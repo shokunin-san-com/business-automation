@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAllRows, countRows } from "@/lib/sheets";
 import { getAccessToken, GCP_PROJECT, GCP_REGION, JOB_MAP } from "@/lib/gcp-auth";
 
@@ -46,6 +46,8 @@ interface PendingIdea {
   description: string;
   target_audience: string;
   created_at: string;
+  offers?: { offerName: string; deliverable: string; price: string }[];
+  evidenceCount?: number;
 }
 
 /**
@@ -59,13 +61,22 @@ interface PendingIdea {
  * - Cloud Scheduler API    -> scheduler states
  * - execution_logs sheet   -> recent execution logs
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const nocache = request.nextUrl.searchParams.get("nocache") === "1";
+  if (nocache) {
+    cache.clear();
+  }
+
+  const fetchErrors: { section: string; message: string }[] = [];
+
   try {
     // --- Pipeline status from Sheets ---
     let pipelineRows: Record<string, string>[] = [];
     try {
       pipelineRows = await cachedGetAllRows("pipeline_status");
-    } catch { /* sheet may not exist yet */ }
+    } catch (err) {
+      fetchErrors.push({ section: "pipeline", message: String(err) });
+    }
 
     const scriptLabels: Record<string, string> = {
       orchestrate_v2: "V2パイプライン",
@@ -108,7 +119,9 @@ export async function GET() {
     let lpCount = 0;
     try {
       lpCount = await cachedCountRows("lp_content");
-    } catch { /* sheet may not exist yet */ }
+    } catch (err) {
+      fetchErrors.push({ section: "lp", message: String(err) });
+    }
 
     // --- Pending offers from offer_3_log (V2: replaces business_ideas) ---
     // Only show READY runs that haven't been approved/rejected yet
@@ -134,21 +147,35 @@ export async function GET() {
         const gateRows = await cachedGetAllRows("gate_decision_log");
 
         for (const rid of pendingRunIds.slice(-5)) {
-          const offer = offers.find((o) => o.run_id === rid);
           const gate = gateRows.find((g) => g.run_id === rid && g.status === "PASS");
-          if (offer || gate) {
+          const ridOffers = offers.filter((o) => o.run_id === rid);
+
+          if (ridOffers.length > 0 || gate) {
             pendingIdeas.push({
               id: rid,
-              name: gate?.micro_market || offer?.offer_name || rid.slice(0, 8),
-              category: offer?.payer || gate?.payer || "",
-              description: offer?.deliverable || gate?.blackout_hypothesis || "",
-              target_audience: offer?.payer || gate?.payer || "",
-              created_at: "",
+              name: gate?.micro_market || rid.slice(0, 8),
+              category: gate?.payer || "",
+              description: gate?.blackout_hypothesis || "",
+              target_audience: gate?.payer || "",
+              created_at: gate?.timestamp || "",
+              offers: ridOffers.map((o) => ({
+                offerName: o.offer_name || "",
+                deliverable: o.deliverable || "",
+                price: o.price || "",
+              })),
+              evidenceCount: (() => {
+                try {
+                  const urls = JSON.parse(gate?.evidence_urls || "{}");
+                  return Object.values(urls).filter(Boolean).length;
+                } catch { return 0; }
+              })(),
             });
           }
         }
       }
-    } catch { /* sheet may not exist yet */ }
+    } catch (err) {
+      fetchErrors.push({ section: "pendingIdeas", message: String(err) });
+    }
 
     // --- Scheduler status from Cloud Scheduler API ---
     const schedulerStatus: Record<string, { state: string; schedule: string; nextRun: string }> = {};
@@ -172,8 +199,8 @@ export async function GET() {
           }
         }
       }
-    } catch {
-      /* scheduler fetch is best-effort */
+    } catch (err) {
+      fetchErrors.push({ section: "scheduler", message: String(err) });
     }
 
     // --- Logs: combine pipeline_status + execution_logs ---
@@ -268,8 +295,8 @@ export async function GET() {
           );
         }
       }
-    } catch {
-      /* V2 data fetch is best-effort */
+    } catch (err) {
+      fetchErrors.push({ section: "v2", message: String(err) });
     }
 
     // --- Downstream metrics: inquiry + deal pipeline ---
@@ -311,8 +338,8 @@ export async function GET() {
         stage,
         count: deals.filter((r) => r.stage === stage).length,
       }));
-    } catch {
-      /* downstream data is best-effort */
+    } catch (err) {
+      fetchErrors.push({ section: "downstream", message: String(err) });
     }
 
     // --- Expansion: winning patterns ---
@@ -333,8 +360,120 @@ export async function GET() {
       expansion.patterns = patterns
         .filter((r) => r.status !== "archived")
         .slice(-10);
-    } catch {
-      /* expansion data is best-effort */
+    } catch (err) {
+      fetchErrors.push({ section: "expansion", message: String(err) });
+    }
+
+    // --- Active Businesses: aggregate per-business stats ---
+    interface ActiveBusinessEntry {
+      runId: string;
+      marketName: string;
+      payer: string;
+      offers: { offerName: string; deliverable: string; price: string }[];
+      gatePassedAt: string;
+      lpReady: boolean;
+      lpUrls: string[];
+      stats: {
+        lpCount: number;
+        snsPostCount: number;
+        formSubmitCount: number;
+        formResponseCount: number;
+        blogArticleCount: number;
+        inquiryCount: number;
+        dealWonCount: number;
+        dealLostCount: number;
+      };
+    }
+
+    let activeBusinesses: ActiveBusinessEntry[] = [];
+
+    try {
+      const lpReady = await cachedGetAllRows("lp_ready_log");
+      const readyRunIds = lpReady
+        .filter((r) => r.status === "READY")
+        .map((r) => r.run_id)
+        .filter(Boolean);
+
+      if (readyRunIds.length > 0) {
+        const gateRows = await cachedGetAllRows("gate_decision_log");
+        const offerRows = await cachedGetAllRows("offer_3_log");
+        const lpContent = await cachedGetAllRows("lp_content");
+        const snsPosts = await cachedGetAllRows("sns_posts");
+        const formTargets = await cachedGetAllRows("form_sales_targets");
+        const blogArticles = await cachedGetAllRows("blog_articles");
+        const inquiryRows = await cachedGetAllRows("inquiry_log");
+        const dealRows = await cachedGetAllRows("deal_pipeline");
+
+        for (const rid of readyRunIds) {
+          const gate = gateRows.find((g) => g.run_id === rid && g.status === "PASS");
+          if (!gate) continue;
+
+          const bizOffers = offerRows
+            .filter((o) => o.run_id === rid)
+            .map((o) => ({
+              offerName: o.offer_name || "",
+              deliverable: o.deliverable || "",
+              price: o.price || "",
+            }));
+
+          const bizLps = lpContent.filter((r) => r.business_id === rid);
+          const lpUrls = bizLps.map((r) => `https://lp-app-pi.vercel.app/lp/${encodeURIComponent(r.business_id)}`);
+
+          const lpCountBiz = bizLps.length;
+          const snsPostCount = snsPosts.filter((r) => r.business_id === rid).length;
+          const formSubmitCount = formTargets.filter(
+            (r) => r.business_id === rid && ["sent", "dry_run"].includes(r.status),
+          ).length;
+          const formResponseCount = formTargets.filter(
+            (r) => r.business_id === rid && r.response && r.response !== "",
+          ).length;
+          const blogArticleCount = blogArticles.filter(
+            (r) => r.business_id === rid && r.status === "published",
+          ).length;
+          const inquiryCount = inquiryRows.filter(
+            (r) => r.business_id === rid || r.run_id === rid,
+          ).length;
+          const dealWonCount = dealRows.filter(
+            (r) => (r.business_id === rid || r.run_id === rid) && r.stage === "won",
+          ).length;
+          const dealLostCount = dealRows.filter(
+            (r) => (r.business_id === rid || r.run_id === rid) && r.stage === "lost",
+          ).length;
+
+          activeBusinesses.push({
+            runId: rid,
+            marketName: gate.micro_market || rid.slice(0, 8),
+            payer: gate.payer || "",
+            offers: bizOffers,
+            gatePassedAt: gate.timestamp || "",
+            lpReady: true,
+            lpUrls,
+            stats: {
+              lpCount: lpCountBiz,
+              snsPostCount,
+              formSubmitCount,
+              formResponseCount,
+              blogArticleCount,
+              inquiryCount,
+              dealWonCount,
+              dealLostCount,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      fetchErrors.push({ section: "activeBusinesses", message: String(err) });
+    }
+
+    // --- Blog stats ---
+    let blogStats = { total: 0, published: 0, draft: 0 };
+    try {
+      const articles = await cachedGetAllRows("blog_articles");
+      blogStats.total = articles.length;
+      blogStats.published = articles.filter((r) => r.status === "published").length;
+      blogStats.draft = articles.filter((r) => r.status === "draft").length;
+    } catch (err) {
+      fetchErrors.push({ section: "blog", message: String(err) });
     }
 
     return NextResponse.json({
@@ -344,7 +483,6 @@ export async function GET() {
       lastUpdated,
       pendingIdeas,
       schedulerStatus,
-      // V2 additions
       v2: {
         latestRunId,
         gateResults,
@@ -355,6 +493,9 @@ export async function GET() {
       },
       downstream,
       expansion,
+      activeBusinesses,
+      fetchErrors,
+      blogStats,
     });
   } catch (err) {
     console.error("Dashboard API error:", err);
@@ -392,6 +533,9 @@ export async function GET() {
         scalingPatterns: 0,
         patterns: [],
       },
+      activeBusinesses: [],
+      fetchErrors: [{ section: "global", message: String(err) }],
+      blogStats: { total: 0, published: 0, draft: 0 },
     });
   }
 }
