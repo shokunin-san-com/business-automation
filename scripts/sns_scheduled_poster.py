@@ -23,10 +23,12 @@ from utils.status_writer import update_status
 
 logger = get_logger("sns_scheduled_poster", "sns_scheduled_poster.log")
 
-MAX_POSTS_PER_RUN = 4         # Max posts per execution
+MAX_TWITTER_PER_RUN = 1       # X(Twitter): 1 post per execution
+MAX_LINKEDIN_PER_RUN = 1      # LinkedIn: 1 post per execution
+MAX_POSTS_PER_RUN = 2         # Max total posts per execution (1 twitter + 1 linkedin)
 POST_INTERVAL_SEC = 30        # Seconds between posts (rate limit safety)
-DAILY_TWITTER_LIMIT = 2       # X(Twitter): 2 posts/day
-DAILY_LINKEDIN_LIMIT = 2      # LinkedIn: 2 posts/day
+DAILY_TWITTER_LIMIT = 2       # X(Twitter): 2 posts/day (run 2x/day)
+DAILY_LINKEDIN_LIMIT = 2      # LinkedIn: 2 posts/day (run 2x/day)
 
 
 def _count_today_posted(all_rows: list[dict], platform: str) -> int:
@@ -114,6 +116,12 @@ def main():
             platform = post.get("platform", "twitter")
             queue_id = post.get("queue_id", "")
             text = post.get("post_text", "")
+
+            # Enforce per-execution platform limits (1 post per platform per run)
+            if platform == "twitter" and twitter_count >= MAX_TWITTER_PER_RUN:
+                continue
+            if platform == "linkedin" and linkedin_count >= MAX_LINKEDIN_PER_RUN:
+                continue
 
             # Enforce daily platform limits
             if platform == "twitter" and twitter_count >= twitter_remaining:

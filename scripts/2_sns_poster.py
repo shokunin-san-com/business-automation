@@ -39,6 +39,10 @@ jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
 LP_BASE_URL = "https://lp-app-pi.vercel.app"
 
+# --- Posting limits ---
+MAX_TWITTER_PER_RUN = 1       # X(Twitter): 1 post per execution
+MAX_LINKEDIN_PER_RUN = 1      # LinkedIn: 1 post per execution
+
 
 def _get_posted_keys() -> set[str]:
     """Return set of (business_id, platform) already posted today."""
@@ -185,11 +189,19 @@ def main():
         total_reviewed = 0
         total_blocked = 0
         total_errors = 0
+        twitter_posted_this_run = 0
+        linkedin_posted_this_run = 0
 
         for idea in active_ideas:
             bid = idea["id"]
 
             for platform in ["twitter", "linkedin"]:
+                # Enforce per-execution limits (1 post per platform per run)
+                if platform == "twitter" and twitter_posted_this_run >= MAX_TWITTER_PER_RUN:
+                    continue
+                if platform == "linkedin" and linkedin_posted_this_run >= MAX_LINKEDIN_PER_RUN:
+                    continue
+
                 if (bid, platform) in posted_keys:
                     continue
 
@@ -205,6 +217,10 @@ def main():
 
                 if status == "posted":
                     total_posted += 1
+                    if platform == "twitter":
+                        twitter_posted_this_run += 1
+                    else:
+                        linkedin_posted_this_run += 1
                 elif status == "pending_review":
                     total_reviewed += 1
                 elif status == "blocked":
