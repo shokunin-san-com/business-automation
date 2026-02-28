@@ -1,0 +1,47 @@
+{# 勝ち筋3軸判定プロンプト #}
+{# Variables: market_name, competitors_json #}
+
+以下の市場と競合リストに基づき、勝ち筋を3つの軸で判定してください。
+
+## 対象市場
+{{ market_name }}
+
+## 競合リスト
+{{ competitors_json }}
+
+## 勝ち筋3軸
+
+### 1. gap（未カバー領域）
+競合がカバーしていない顧客セグメント、機能、価格帯、地域はあるか？
+
+### 2. marketing（集客力弱点）
+競合のSEO、SNS、広告が弱い領域はあるか？検索上位を取れる隙間はあるか？
+
+### 3. ai_cost（AIコスト優位）
+AIを活用して競合より大幅に低コストで提供できるか？人件費を90%削減できる領域は？
+
+## ★絶対ルール★
+- スコアリング禁止
+- 各軸について「ある/なし」+ 具体的根拠を記述
+- 3軸すべて「なし」の場合、この市場は参入不可と判定
+
+## 出力形式（JSON）
+{
+  "gap": {
+    "exists": true/false,
+    "detail": "具体的な未カバー領域の説明",
+    "target_segment": "狙えるセグメント"
+  },
+  "marketing": {
+    "exists": true/false,
+    "detail": "競合の集客弱点の説明",
+    "opportunity": "具体的なSEO/SNS戦略"
+  },
+  "ai_cost": {
+    "exists": true/false,
+    "detail": "AIコスト優位の説明",
+    "cost_reduction": "削減見込み（例: 人件費80%削減）"
+  },
+  "overall_verdict": "WINNABLE / NOT_WINNABLE",
+  "best_strategy": "最も有望な勝ち筋の要約（1文）"
+}

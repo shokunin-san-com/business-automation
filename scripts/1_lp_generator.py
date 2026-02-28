@@ -200,6 +200,17 @@ def generate_lp_content(
     lp_data["name"] = market["name"]
     lp_data["payer"] = market.get("payer", "")
 
+    # Generate URL slug
+    try:
+        from utils.slug_generator import generate_slug
+        lp_data["slug"] = generate_slug(market["name"])
+    except Exception as e:
+        logger.warning(f"Slug generation failed: {e}")
+        lp_data["slug"] = market["run_id"][:12]
+
+    # Embed business_id as hidden field for tracking
+    lp_data["business_id"] = market.get("lp_id", market["run_id"])
+
     return lp_data
 
 

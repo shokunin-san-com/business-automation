@@ -70,6 +70,13 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 # --- Google Chat ---
 GCHAT_WEBHOOK_URL = os.getenv("GCHAT_WEBHOOK_URL", "")
 
+# --- Gmail API ---
+GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "info02@shokunin-san.com")
+
+# --- Cost tracking ---
+COST_WARN_JPY = int(os.getenv("COST_WARN_JPY", "25000"))
+COST_HARD_STOP_JPY = int(os.getenv("COST_HARD_STOP_JPY", "30000"))
+
 # --- Business ---
 YOUR_COMPANY_NAME = os.getenv("YOUR_COMPANY_NAME", "MarketProbe Project")
 YOUR_NAME = os.getenv("YOUR_NAME", "みゆ")

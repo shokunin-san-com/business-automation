@@ -1,21 +1,21 @@
 """
 orchestrate_v2.py — V2 Evidence-gate pipeline orchestrator.
 
-3-Layer Exploration Engine:
-  Phase A: Layer 1 — AI generates 100+ business model types (3 rounds)
-  Phase B: Layer 2 — Cross types x construction needs → 500-1500 combos
-  Phase C: Search demand verification for top combos
-  Phase D: Competitor analysis (20 companies + pricing) for PASS combos
-  Phase E: Offer generation (3 offers per combo)
-  Phase F: Priority scoring
-  Phase G: LP guard check → SEO KW → GTM → target collection
+Phase A: Layer 1 — 5-axis x 20 prompts → 50-80 business model types
+Phase B: Layer 2 — Types x construction needs → 500-1500 combos
+Phase C: Multi-source demand verification (Suggest / Gemini / SNS)
+Phase D: Competitor analysis (Gemini grounding + 3-axis win assessment)
+Phase E: Offer generation (AI禁止 + 具体的納品物)
+Phase F: LP generation + URL slug
+Phase G: Email target collection (Gemini grounding)
+Phase H: CEO approval + email sending (Gmail API)
+→ 2 weeks later: Validation A/B/C/D ranking
 
-All scoring is **prohibited** for gate decisions.
-Decisions are PASS/FAIL based on real data (search results, ads, URLs).
+All gate decisions are PASS/FAIL based on real data. No scoring.
 run_id is generated once and propagated to all steps for traceability.
+Budget gate (cost_tracker) checked before each phase.
 
-Continuous mode: settings シートの v2_continuous_mode=true で連続実行。
-完了後に Cloud Run Job を自動再トリガーする（最大10回連続、エラー時停止）。
+Continuous mode: settings の v2_continuous_mode=true で連続実行。
 
 Usage:
     SCRIPT_NAME=orchestrate_v2 python run.py
@@ -33,36 +33,35 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import DATA_DIR, GCP_PROJECT_ID, TEMPLATES_DIR, get_logger
+from config import (
+    DATA_DIR, GCP_PROJECT_ID, TEMPLATES_DIR,
+    YOUR_NAME, YOUR_EMAIL,
+    get_logger,
+)
 from utils.sheets_client import (
     get_all_rows, append_rows, get_sheet_urls,
     get_setting, find_row_index, update_cell,
-    ensure_sheet_exists,
 )
 from utils.slack_notifier import send_message as notify
 from utils.status_writer import update_status
 
+# --- New v2 modules ---
+from utils.exploration_engine import load_ceo_constraints, run_layer1, run_layer2
+from utils.demand_verifier import verify_batch as demand_verify_batch
+from utils.competitor_analyzer import analyze_competitors
+from utils.email_target_collector import collect_emails
+from utils.email_sender import submit_for_approval
+from utils.cost_tracker import check_budget_gate, record_api_call
+from utils.slug_generator import generate_slug
+
+# --- Existing modules still used ---
+from A_market_research import save_settings_snapshot
+from utils.pdf_knowledge import get_knowledge_summary
+from utils.claude_client import generate_json_with_retry
+
 GCP_REGION = os.getenv("GCP_REGION", "asia-northeast1")
 CONTINUOUS_MAX_RUNS = 10
 CONTINUOUS_COOLDOWN_SEC = 60
-
-# Import exploration engine
-from utils.exploration_engine import (
-    load_ceo_constraints, run_layer1, run_layer2,
-    COMBOS_SHEET, COMBOS_HEADERS,
-)
-
-# Import downstream step modules
-from A_market_research import save_settings_snapshot
-from C_competitor_analysis import analyze_competitors_20, save_competitors_to_sheets, scrape_competitor_pricing
-from utils.pdf_knowledge import get_knowledge_summary
-from utils.search_volume import verify_batch as sv_verify_batch
-from utils.priority_scorer import score_markets as priority_score
-from utils.win_strategy import generate_win_strategy
-from utils.unit_economics import calculate_agency_ue
-from utils.seo_keywords import research_keywords as seo_research
-from utils.go_to_market import generate_gtm_plan
-from utils.claude_client import generate_json_with_retry
 
 logger = get_logger("orchestrate_v2", "orchestrate_v2.log")
 
@@ -72,15 +71,15 @@ STEP_WARN = "⚠️ 警告あり"
 STEP_FAIL = "❌ 失敗"
 STEP_SKIP = "⏭️ スキップ"
 
-# Sheet names for each step (for report links)
 STEP_SHEET_MAP = {
     "A": ["business_model_types"],
     "B": ["business_combos"],
-    "C": ["search_volume_log"],
-    "D": ["competitor_20_log", "competitor_pricing_log"],
+    "C": ["demand_verification_log"],
+    "D": ["competitor_20_log"],
     "E": ["offer_3_log"],
-    "F": ["priority_score_log"],
-    "G": ["lp_ready_log"],
+    "F": ["lp_content"],
+    "G": ["email_targets"],
+    "H": ["mail_approval"],
 }
 
 
@@ -111,87 +110,24 @@ def _make_step_result(
     }
 
 
-# ---------------------------------------------------------------------------
-# Self-review — AI checks its own output for quality
-# ---------------------------------------------------------------------------
-
-def _self_review(step_name: str, data: Any, context: str = "") -> dict:
-    """Run AI self-review on step output."""
-    if not data:
-        return {"passed": True, "issues": [], "suggestions": []}
-
-    data_sample = json.dumps(data, ensure_ascii=False, default=str)[:3000]
-
-    prompt = (
-        f"以下は「{step_name}」ステップの出力です。品質をレビューしてください。\n\n"
-        f"出力データ（先頭3000文字）:\n{data_sample}\n\n"
-        f"コンテキスト: {context}\n\n"
-        f"以下をJSON形式で出力:\n"
-        f'{{"passed": true/false,\n'
-        f'  "issues": ["問題点1", "問題点2"],\n'
-        f'  "suggestions": ["改善提案1"]}}\n\n'
-        f"判定基準:\n"
-        f"- 架空のURL/企業名がないか\n"
-        f"- 必須フィールドが埋まっているか\n"
-        f"- 業務代行型オファーの方針に合致しているか\n"
-        f"- データの整合性があるか"
-    )
-
-    try:
-        result = generate_json_with_retry(
-            prompt=prompt,
-            system="品質レビュアーとして、出力の問題点を指摘してください。問題なければpassedをtrueに。",
-            max_tokens=2048,
-            temperature=0.2,
-            max_retries=1,
-        )
-        if isinstance(result, list):
-            result = result[0] if result else {}
-        return {
-            "passed": result.get("passed", True),
-            "issues": result.get("issues", []),
-            "suggestions": result.get("suggestions", []),
-        }
-    except Exception as e:
-        logger.warning(f"Self-review failed for {step_name}: {e}")
-        return {"passed": True, "issues": [], "suggestions": [f"レビュー実行エラー: {e}"]}
+def _budget_check(steps: list[dict], run_id: str, start_time: float) -> bool:
+    """Check budget gate. Returns True if OK to proceed."""
+    gate = check_budget_gate()
+    if gate["status"] == "HARD_STOP":
+        steps.append(_make_step_result(
+            "BUDGET", STEP_FAIL,
+            errors=[f"月額上限到達: ¥{gate['cumulative_jpy']:,.0f} / ¥{gate['hard_stop_jpy']:,.0f}"],
+        ))
+        _abort_pipeline(steps, run_id, start_time)
+        return False
+    if gate["status"] == "WARNING":
+        logger.warning(f"Budget warning: ¥{gate['cumulative_jpy']:,.0f}")
+    return True
 
 
 # ---------------------------------------------------------------------------
-# Adapter functions — convert combo format to existing module inputs
+# Offer generation
 # ---------------------------------------------------------------------------
-
-def _combos_to_market_format(combos: list[dict]) -> list[dict]:
-    """Convert combos to the format expected by search_volume.verify_batch().
-
-    verify_batch expects: [{micro_market, industry, task, intent_word, ...}]
-    """
-    markets = []
-    for c in combos:
-        name = c.get("business_name", "")
-        target = c.get("target", "")
-        markets.append({
-            "micro_market": name,
-            "industry": "建設業",
-            "task": c.get("deliverable", ""),
-            "intent_word": target,
-            "payer": target,
-            "combo_id": c.get("combo_id", ""),
-            "type_id": c.get("type_id", ""),
-            "type_name": c.get("type_name", ""),
-        })
-    return markets
-
-
-def _combo_to_micro_market(combo: dict) -> dict:
-    """Convert a combo to the format expected by analyze_competitors_20()."""
-    return {
-        "micro_market": combo.get("business_name", ""),
-        "payer": combo.get("target", ""),
-        "evidence_urls": "[]",
-        "blackout_hypothesis": combo.get("monthly_300_path", ""),
-    }
-
 
 def _generate_combo_offers(
     combo: dict,
@@ -199,14 +135,18 @@ def _generate_combo_offers(
     knowledge_context: str,
     gap_top3: list,
 ) -> list[dict]:
-    """Generate 3 offers for a combo using offer_3_prompt.j2 with combo context."""
     from jinja2 import Environment, FileSystemLoader
     from utils.validators import validate_offer_3
 
     offer_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
     template = offer_env.get_template("offer_3_prompt.j2")
 
-    micro_market_data = _combo_to_micro_market(combo)
+    micro_market_data = {
+        "micro_market": combo.get("business_name", ""),
+        "payer": combo.get("target", ""),
+        "evidence_urls": "[]",
+        "blackout_hypothesis": combo.get("monthly_300_path", ""),
+    }
 
     try:
         from utils.learning_engine import get_learning_context
@@ -241,121 +181,6 @@ def _generate_combo_offers(
     return offers
 
 
-def _update_combo_verdicts(
-    combos: list[dict],
-    sv_results: list[dict],
-    run_id: str,
-) -> list[dict]:
-    """Update business_combos sheet demand_verdict based on SV results.
-
-    Returns list of PASS combos.
-    """
-    sv_pass_names = {r.get("micro_market", "") for r in sv_results}
-    passed_combos = []
-
-    for c in combos:
-        name = c.get("business_name", "")
-        verdict = "PASS" if name in sv_pass_names else "FAIL"
-        c["demand_verdict"] = verdict
-        if verdict == "PASS":
-            passed_combos.append(c)
-
-    # Batch update verdicts in sheet
-    try:
-        existing_rows = get_all_rows(COMBOS_SHEET)
-        for row in existing_rows:
-            if row.get("run_id") == run_id:
-                bname = row.get("business_name", "")
-                verdict = "PASS" if bname in sv_pass_names else "FAIL"
-                row_idx = find_row_index(COMBOS_SHEET, "combo_id", row.get("combo_id", ""))
-                if row_idx:
-                    update_cell(COMBOS_SHEET, row_idx, 9, verdict)  # demand_verdict col
-    except Exception as e:
-        logger.warning(f"Failed to update combo verdicts in sheet: {e}")
-
-    return passed_combos
-
-
-# ---------------------------------------------------------------------------
-# LP readiness check
-# ---------------------------------------------------------------------------
-
-def check_lp_ready(run_id: str) -> dict:
-    """Check if all conditions for LP creation are met.
-
-    Conditions:
-    1. search_volume_log has PASS records for this run_id
-    2. competitor_20_log has records for this run_id
-    3. offer_3_log has 3 complete records for this run_id
-    """
-    missing = []
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    # 1. Search volume — at least 1 PASS
-    gate_ok = False
-    try:
-        sv_rows = get_all_rows("search_volume_log")
-        sv_pass = [r for r in sv_rows if r.get("run_id") == run_id and r.get("status") == "PASS"]
-        if sv_pass:
-            gate_ok = True
-    except Exception:
-        pass
-    if not gate_ok:
-        missing.append("search_volume_log: PASS市場なし")
-
-    # 2. Competitor check
-    competitor_ok = False
-    try:
-        comp_rows = get_all_rows("competitor_20_log")
-        comp_for_run = [r for r in comp_rows if r.get("run_id") == run_id]
-        if len(comp_for_run) >= 10:
-            competitor_ok = True
-        else:
-            missing.append(f"competitor_20_log: {len(comp_for_run)}社のみ（10社以上必要）")
-    except Exception:
-        missing.append("competitor_20_log: データ取得エラー")
-
-    # 3. Offer check
-    offer_ok = False
-    try:
-        offer_rows = get_all_rows("offer_3_log")
-        offers_for_run = [r for r in offer_rows if r.get("run_id") == run_id]
-        if len(offers_for_run) >= 3:
-            required = ["payer", "offer_name", "deliverable", "time_to_value", "price", "replaces", "upsell"]
-            complete = all(
-                all(str(o.get(f, "")).strip() for f in required)
-                for o in offers_for_run[:3]
-            )
-            if complete:
-                offer_ok = True
-            else:
-                missing.append("offer_3_log: 必須フィールドに空欄あり")
-        else:
-            missing.append(f"offer_3_log: {len(offers_for_run)}案のみ（3案必要）")
-    except Exception:
-        missing.append("offer_3_log: データ取得エラー")
-
-    status = "READY" if (gate_ok and competitor_ok and offer_ok) else "BLOCKED"
-    blocked_reason = " / ".join(missing) if missing else ""
-
-    try:
-        append_rows("lp_ready_log", [[
-            run_id, now,
-            str(gate_ok), str(competitor_ok), str(offer_ok),
-            status, blocked_reason,
-        ]])
-    except Exception as e:
-        logger.warning(f"Failed to write lp_ready_log: {e}")
-
-    return {
-        "status": status,
-        "gate_ok": gate_ok,
-        "competitor_ok": competitor_ok,
-        "offer_ok": offer_ok,
-        "missing": missing,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Pipeline report
 # ---------------------------------------------------------------------------
@@ -363,16 +188,13 @@ def check_lp_ready(run_id: str) -> dict:
 def send_pipeline_report(
     steps: list[dict],
     run_id: str,
-    lp_check: dict,
     total_duration: str,
-    passed_combo_count: int = 0,
-    offer_count: int = 0,
+    budget_info: dict | None = None,
 ):
-    """Send a comprehensive pipeline report to Slack."""
     try:
         all_sheet_names = set()
         for s in steps:
-            step_key = s["name"].split(":")[0]
+            step_key = s["name"].split(":")[0].strip()
             for sn in STEP_SHEET_MAP.get(step_key, []):
                 all_sheet_names.add(sn)
         sheet_urls = get_sheet_urls(list(all_sheet_names)) if all_sheet_names else {}
@@ -382,7 +204,7 @@ def send_pipeline_report(
     has_errors = any(s["status"] == STEP_FAIL for s in steps)
     has_warnings = any(s["status"] == STEP_WARN for s in steps)
 
-    header = "🚀 *V2パイプライン完了（3Layer探索）*"
+    header = "🚀 *V2パイプライン完了（Phase A-H）*"
     if has_errors:
         header = "🚨 *V2パイプライン完了（エラーあり）*"
     elif has_warnings:
@@ -395,7 +217,7 @@ def send_pipeline_report(
     ]
 
     for s in steps:
-        step_key = s["name"].split(":")[0]
+        step_key = s["name"].split(":")[0].strip()
         relevant = STEP_SHEET_MAP.get(step_key, [])
         link_parts = [f"<{sheet_urls[sn]}|{sn}>" for sn in relevant if sn in sheet_urls]
         link_str = f"  → {' '.join(link_parts)}" if link_parts else ""
@@ -405,24 +227,12 @@ def send_pipeline_report(
             for e in s["errors"][:3]:
                 lines.append(f"    → {e}")
 
-    lines.append("")
-    lp_status = lp_check.get("status", "UNKNOWN")
-    if lp_status == "READY":
-        lines.append("🟢 *LP作成: READY* — 全条件クリア")
-    else:
-        lines.append(f"🔴 *LP作成: BLOCKED*")
-        for m in lp_check.get("missing", []):
-            lines.append(f"    → {m}")
-
-    # CEO review notification
-    ceo_items = []
-    if passed_combo_count > 1:
-        ceo_items.append(f"• PASSコンボが{passed_combo_count}件あります。優先度順で上位を選んでください。")
-    if ceo_items and lp_status == "READY":
+    if budget_info:
         lines.append("")
-        lines.append("👔 *CEO承認が必要です*")
-        for item in ceo_items:
-            lines.append(f"    {item}")
+        lines.append(
+            f"💰 コスト: ¥{budget_info.get('cumulative_jpy', 0):,.0f}"
+            f" / ¥{budget_info.get('hard_stop_jpy', 30000):,.0f}"
+        )
 
     from config import GOOGLE_SHEETS_ID
     if GOOGLE_SHEETS_ID:
@@ -463,7 +273,7 @@ def _abort_pipeline(steps: list[dict], run_id: str, start_time: float):
 
 
 # ---------------------------------------------------------------------------
-# Continuous mode — self re-trigger
+# Continuous mode
 # ---------------------------------------------------------------------------
 
 def _get_continuous_settings() -> tuple[bool, int]:
@@ -547,7 +357,7 @@ def _handle_continuous_mode(success: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Main orchestrator — 3-Layer Exploration Pipeline
+# Main orchestrator — Phase A-H Pipeline
 # ---------------------------------------------------------------------------
 
 def main():
@@ -555,7 +365,7 @@ def main():
     run_id = str(uuid.uuid4())
 
     logger.info("=" * 60)
-    logger.info(f"V2 パイプライン開始 — 3Layer探索 (run_id={run_id})")
+    logger.info(f"V2 パイプライン開始 — Phase A-H (run_id={run_id})")
     logger.info("=" * 60)
     update_status("orchestrate_v2", "running", f"パイプライン開始 (run_id={run_id[:8]})")
 
@@ -572,17 +382,18 @@ def main():
         steps: list[dict] = []
 
         # ===================================================================
-        # Phase A: Layer 1 — Business model type generation (100+ types)
+        # Phase A: Layer 1 — 5-axis x 20 prompts → 50-80 types
         # ===================================================================
-        logger.info("=" * 40 + " Phase A: Layer 1 型生成")
+        if not _budget_check(steps, run_id, start_time):
+            return
+
+        logger.info("=" * 40 + " Phase A: Layer 1 型生成 (5軸×20プロンプト)")
         update_status("orchestrate_v2", "running", "A: Layer 1 ビジネスモデル型生成中...")
         try:
             all_types = run_layer1(
                 ceo_constraints=ceo_constraints,
                 knowledge_context=knowledge_context,
                 run_id=run_id,
-                rounds=3,
-                target_per_round=35,
             )
             if not all_types:
                 steps.append(_make_step_result("A: Layer1型生成", STEP_FAIL,
@@ -602,6 +413,9 @@ def main():
         # ===================================================================
         # Phase B: Layer 2 — Type x Needs combo generation
         # ===================================================================
+        if not _budget_check(steps, run_id, start_time):
+            return
+
         logger.info("=" * 40 + f" Phase B: Layer 2 コンボ生成 ({len(all_types)}型)")
         update_status("orchestrate_v2", "running", f"B: {len(all_types)}型のコンボ生成中...")
         all_combos: list[dict] = []
@@ -629,107 +443,128 @@ def main():
             return
 
         # ===================================================================
-        # Phase C: Search demand verification for top combos
+        # Phase C: Multi-source demand verification
         # ===================================================================
-        combo_markets = _combos_to_market_format(all_combos[:max_sv_combos])
-        logger.info("=" * 40 + f" Phase C: 検索需要検証 ({len(combo_markets)}コンボ)")
-        update_status("orchestrate_v2", "running", f"C: {len(combo_markets)}コンボの検索需要検証中...")
+        if not _budget_check(steps, run_id, start_time):
+            return
+
+        verify_combos = all_combos[:max_sv_combos]
+        logger.info("=" * 40 + f" Phase C: マルチソース需要検証 ({len(verify_combos)}コンボ)")
+        update_status("orchestrate_v2", "running", f"C: {len(verify_combos)}コンボの需要検証中...")
 
         passed_combos: list[dict] = []
         try:
-            sv_passed, sv_all = sv_verify_batch(combo_markets, run_id, max_markets=max_sv_combos)
-            if not sv_passed:
-                steps.append(_make_step_result("C: 検索需要検証", STEP_FAIL,
+            dv_passed, dv_all = demand_verify_batch(verify_combos, run_id, max_groups=150)
+            if not dv_passed:
+                steps.append(_make_step_result("C: 需要検証", STEP_FAIL,
                                                count=0,
-                                               errors=[f"全{len(sv_all)}コンボFAIL"]))
+                                               errors=[f"全{len(dv_all)}グループFAIL"]))
             else:
-                steps.append(_make_step_result("C: 検索需要検証", STEP_OK,
-                                               count=len(sv_passed),
-                                               data=sv_passed))
-
-            # Update combo verdicts in sheet
-            passed_combos = _update_combo_verdicts(all_combos[:max_sv_combos], sv_passed or [], run_id)
+                weak_count = sum(
+                    1 for r in dv_all
+                    if r.get("verdict") == "WEAK"
+                )
+                warnings = []
+                if weak_count:
+                    warnings.append(f"WEAK判定: {weak_count}件")
+                steps.append(_make_step_result("C: 需要検証", STEP_OK,
+                                               count=len(dv_passed),
+                                               warnings=warnings,
+                                               data=dv_passed))
+            passed_combos = dv_passed or []
         except Exception as e:
             logger.error(f"Phase C exception: {e}")
-            steps.append(_make_step_result("C: 検索需要検証", STEP_FAIL,
+            steps.append(_make_step_result("C: 需要検証", STEP_FAIL,
                                            errors=[str(e)]))
 
         if not passed_combos:
             steps.append(_make_step_result("判定", STEP_FAIL,
-                                           errors=["PASSコンボ0件 → D/E/F/Gスキップ"]))
+                                           errors=["PASSコンボ0件 → D-Hスキップ"]))
 
         # ===================================================================
-        # Phase D: Competitor analysis for top PASS combos
+        # Phase D: Competitor analysis (Gemini grounding + 3-axis win)
         # ===================================================================
         d_combos = passed_combos[:max_competitor_combos]
-        all_gap_top3: list = []
-        all_analysis: list = []
+        all_win_assessments: list[dict] = []
 
         if not d_combos:
             steps.append(_make_step_result("D: 競合分析", STEP_SKIP,
                                            warnings=["PASSコンボなし"]))
         else:
+            if not _budget_check(steps, run_id, start_time):
+                return
+
             logger.info("=" * 40 + f" Phase D: 競合分析 ({len(d_combos)}コンボ)")
             update_status("orchestrate_v2", "running", f"D: {len(d_combos)}コンボの競合分析中...")
 
-            total_comp_count = 0
+            d_pass_combos = []
             for combo in d_combos:
                 combo_name = combo.get("business_name", "unknown")
                 logger.info(f"  D: 競合分析 — {combo_name}")
 
                 try:
-                    mm_data = _combo_to_micro_market(combo)
-                    analysis = analyze_competitors_20(
-                        mm_data, {}, knowledge_context, run_id
+                    result = analyze_competitors(
+                        market_name=combo_name,
+                        run_id=run_id,
+                        max_competitors=20,
                     )
-                    comp_count = save_competitors_to_sheets(analysis, run_id, combo_name)
-                    total_comp_count += comp_count
 
-                    gap3 = analysis.get("gap_top3", [])
-                    all_gap_top3.extend(gap3)
-                    all_analysis.append({"combo": combo, "analysis": analysis, "gap_top3": gap3})
-
-                    # Scrape competitor pricing
-                    competitors = analysis.get("competitors", [])
-                    if competitors:
-                        scrape_competitor_pricing(competitors, run_id, combo_name)
+                    status = result.get("status", "FAIL")
+                    if status == "PASS":
+                        d_pass_combos.append(combo)
+                        win = result.get("win_assessment", {})
+                        all_win_assessments.append({
+                            "combo": combo,
+                            "win_assessment": win,
+                            "competitors": result.get("competitors", []),
+                        })
+                    else:
+                        reason = result.get("fail_reason", "unknown")
+                        logger.info(f"  D: {combo_name} → FAIL ({reason})")
 
                     time.sleep(1.0)
                 except Exception as e:
                     logger.warning(f"D failed for {combo_name}: {e}")
 
-            if total_comp_count >= 10:
+            if d_pass_combos:
                 steps.append(_make_step_result("D: 競合分析", STEP_OK,
-                                               count=total_comp_count))
-            elif total_comp_count > 0:
-                steps.append(_make_step_result("D: 競合分析", STEP_WARN,
-                                               count=total_comp_count,
-                                               warnings=[f"{total_comp_count}社（20社目標）"]))
+                                               count=len(d_pass_combos),
+                                               data=d_pass_combos))
             else:
                 steps.append(_make_step_result("D: 競合分析", STEP_FAIL,
-                                               errors=["競合データ取得失敗"]))
+                                               errors=["全コンボ競合分析FAIL"]))
+
+            # Narrow passed_combos to those that passed D
+            passed_combos = d_pass_combos
 
         # ===================================================================
-        # Phase E: Offer generation for top PASS combos
+        # Phase E: Offer generation for PASS combos
         # ===================================================================
         all_offers: list[dict] = []
+        e_combos = passed_combos[:max_competitor_combos]
 
-        if not d_combos:
+        if not e_combos:
             steps.append(_make_step_result("E: オファー生成", STEP_SKIP,
                                            warnings=["PASSコンボなし"]))
         else:
-            logger.info("=" * 40 + f" Phase E: オファー生成 ({len(d_combos)}コンボ)")
-            update_status("orchestrate_v2", "running", f"E: {len(d_combos)}コンボのオファー生成中...")
+            if not _budget_check(steps, run_id, start_time):
+                return
 
-            for idx, combo in enumerate(d_combos):
+            logger.info("=" * 40 + f" Phase E: オファー生成 ({len(e_combos)}コンボ)")
+            update_status("orchestrate_v2", "running", f"E: {len(e_combos)}コンボのオファー生成中...")
+
+            for combo in e_combos:
                 combo_name = combo.get("business_name", "unknown")
                 logger.info(f"  E: オファー生成 — {combo_name}")
 
-                # Find gap_top3 for this combo
+                # Find win assessment gap info for this combo
                 combo_gaps = []
-                for a in all_analysis:
-                    if a["combo"].get("combo_id") == combo.get("combo_id"):
-                        combo_gaps = a.get("gap_top3", [])
+                for wa in all_win_assessments:
+                    if wa["combo"].get("combo_id") == combo.get("combo_id"):
+                        win = wa.get("win_assessment", {})
+                        gap_detail = win.get("gap", {}).get("detail", "")
+                        if gap_detail:
+                            combo_gaps = [{"gap": gap_detail}]
                         break
 
                 try:
@@ -737,10 +572,9 @@ def main():
                         combo=combo,
                         run_id=run_id,
                         knowledge_context=knowledge_context,
-                        gap_top3=combo_gaps or all_gap_top3[:3],
+                        gap_top3=combo_gaps,
                     )
 
-                    # Save to sheets
                     offer_rows = []
                     for offer in offers:
                         offer_rows.append([
@@ -771,112 +605,165 @@ def main():
                                                errors=["オファー生成失敗"]))
 
         # ===================================================================
-        # Phase F: Priority scoring
+        # Phase F: LP generation + slug
         # ===================================================================
-        if passed_combos:
-            logger.info("=" * 40 + " Phase F: 優先度スコアリング")
-            update_status("orchestrate_v2", "running", "F: 優先度スコアリング中...")
-
-            # Convert passed combos to market-like format for priority_score
-            sv_market_format = _combos_to_market_format(passed_combos)
-            try:
-                scored = priority_score(run_id, sv_market_format)
-                if scored:
-                    top = scored[0]
-                    steps.append(_make_step_result("F: 優先度", STEP_OK,
-                                                   count=len(scored),
-                                                   data={"top": top.get("micro_market", ""),
-                                                         "tier": top.get("priority_tier", "")}))
-                else:
-                    steps.append(_make_step_result("F: 優先度", STEP_SKIP,
-                                                   warnings=["スコアリング対象なし"]))
-            except Exception as e:
-                logger.warning(f"F exception: {e}")
-                steps.append(_make_step_result("F: 優先度", STEP_WARN,
-                                               warnings=[str(e)]))
+        if not all_offers or not e_combos:
+            steps.append(_make_step_result("F: LP生成", STEP_SKIP,
+                                           warnings=["オファーなし"]))
         else:
-            steps.append(_make_step_result("F: 優先度", STEP_SKIP,
+            if not _budget_check(steps, run_id, start_time):
+                return
+
+            logger.info("=" * 40 + " Phase F: LP生成 + スラッグ")
+            update_status("orchestrate_v2", "running", "F: LP生成中...")
+
+            lp_count = 0
+            for combo in e_combos:
+                combo_name = combo.get("business_name", "unknown")
+                try:
+                    slug = generate_slug(combo_name)
+                    business_id = f"{run_id[:8]}-{slug}"
+
+                    combo_offers = [
+                        o for o in all_offers
+                        if o.get("payer", "") == combo.get("target", "")
+                    ][:3]
+                    if not combo_offers:
+                        combo_offers = all_offers[:3]
+
+                    # Find competitor info
+                    competitors = []
+                    for wa in all_win_assessments:
+                        if wa["combo"].get("combo_id") == combo.get("combo_id"):
+                            competitors = wa.get("competitors", [])[:5]
+                            break
+
+                    # Record LP readiness
+                    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    append_rows("lp_ready_log", [[
+                        run_id, now,
+                        "True", "True", "True",
+                        "READY", "",
+                        combo_name, slug, business_id,
+                    ]])
+                    lp_count += 1
+
+                    logger.info(f"  F: LP準備完了 — {combo_name} (slug={slug})")
+                except Exception as e:
+                    logger.warning(f"F failed for {combo_name}: {e}")
+
+            if lp_count:
+                steps.append(_make_step_result("F: LP生成", STEP_OK, count=lp_count))
+            else:
+                steps.append(_make_step_result("F: LP生成", STEP_WARN,
+                                               warnings=["LP準備なし"]))
+
+        # ===================================================================
+        # Phase G: Email target collection (Gemini grounding)
+        # ===================================================================
+        all_email_targets: list[dict] = []
+
+        if not e_combos:
+            steps.append(_make_step_result("G: メール収集", STEP_SKIP,
                                            warnings=["PASSコンボなし"]))
-
-        # ===================================================================
-        # Phase G: LP guard → SEO KW → GTM → target collection
-        # ===================================================================
-        logger.info("=" * 40 + " Phase G: LP/SEO/GTM")
-        update_status("orchestrate_v2", "running", "G: LPガードチェック中...")
-
-        lp_check = check_lp_ready(run_id)
-        if lp_check["status"] == "READY":
-            steps.append(_make_step_result("G: LPガード", STEP_OK))
-
-            # --- SEO keyword research ---
-            top_combo = d_combos[0] if d_combos else None
-            if top_combo:
-                top_name = top_combo.get("business_name", "")
-                logger.info(f"  G-K: SEOキーワード調査 ({top_name})")
-                update_status("orchestrate_v2", "running", f"G-K: SEO KW調査中...")
-                try:
-                    seo_data = seo_research(
-                        market_name=top_name,
-                        run_id=run_id,
-                        industry=top_combo.get("target", ""),
-                    )
-                    kw_count = seo_data.get("total_keywords", 0)
-                    steps.append(_make_step_result("G: SEO KW", STEP_OK,
-                                                   count=kw_count))
-                except Exception as e:
-                    logger.warning(f"G-K exception: {e}")
-                    steps.append(_make_step_result("G: SEO KW", STEP_WARN,
-                                                   warnings=[str(e)]))
-
-                # --- GTM plan ---
-                logger.info(f"  G-S: GTM計画 ({top_name})")
-                update_status("orchestrate_v2", "running", f"G-S: GTM計画策定中...")
-                try:
-                    win_strategy = {}
-                    try:
-                        win_strategy = generate_win_strategy(
-                            market_name=top_name,
-                            run_id=run_id,
-                            gap_top3=all_gap_top3[:3],
-                        )
-                    except Exception:
-                        pass
-
-                    gtm = generate_gtm_plan(
-                        market_name=top_name,
-                        run_id=run_id,
-                        offers=all_offers[:3] if all_offers else [],
-                        win_strategy=win_strategy if win_strategy else None,
-                    )
-                    ch_count = len(gtm.get("channels", []))
-                    steps.append(_make_step_result("G: GTM計画", STEP_OK,
-                                                   count=ch_count))
-                except Exception as e:
-                    logger.warning(f"G-S exception: {e}")
-                    steps.append(_make_step_result("G: GTM計画", STEP_WARN,
-                                                   warnings=[str(e)]))
-
-                # --- Target collection ---
-                logger.info(f"  G-T: ターゲット収集 ({top_name})")
-                update_status("orchestrate_v2", "running", f"G-T: ターゲット収集中...")
-                try:
-                    from utils.target_collector import collect_and_register
-                    registered = collect_and_register(
-                        business_id=run_id[:8],
-                        market_name=top_name,
-                        payer=top_combo.get("target", ""),
-                        target_count=20,
-                    )
-                    if registered:
-                        steps.append(_make_step_result("G: ターゲット収集", STEP_OK,
-                                                       count=registered))
-                except Exception as e:
-                    logger.warning(f"G-T exception: {e}")
-                    steps.append(_make_step_result("G: ターゲット収集", STEP_WARN,
-                                                   warnings=[str(e)]))
         else:
-            steps.append(_make_step_result("G: LPガード", STEP_WARN,
-                                           warnings=[f"BLOCKED: {', '.join(lp_check.get('missing', []))}"]))
+            if not _budget_check(steps, run_id, start_time):
+                return
+
+            logger.info("=" * 40 + " Phase G: メールターゲット収集")
+            update_status("orchestrate_v2", "running", "G: メールターゲット収集中...")
+
+            for combo in e_combos:
+                combo_name = combo.get("business_name", "unknown")
+                payer = combo.get("target", "建設会社")
+                slug = generate_slug(combo_name)
+                business_id = f"{run_id[:8]}-{slug}"
+
+                logger.info(f"  G: メール収集 — {combo_name} (payer={payer})")
+                try:
+                    targets = collect_emails(
+                        market_name=combo_name,
+                        payer=payer,
+                        run_id=run_id,
+                        business_id=business_id,
+                        target_count=50,
+                    )
+                    for t in targets:
+                        t["combo_name"] = combo_name
+                        t["business_id"] = business_id
+                    all_email_targets.extend(targets)
+                    time.sleep(1.0)
+                except Exception as e:
+                    logger.warning(f"G failed for {combo_name}: {e}")
+
+            if all_email_targets:
+                steps.append(_make_step_result("G: メール収集", STEP_OK,
+                                               count=len(all_email_targets)))
+            else:
+                steps.append(_make_step_result("G: メール収集", STEP_WARN,
+                                               warnings=["メールアドレス取得0件"]))
+
+        # ===================================================================
+        # Phase H: CEO approval + email sending
+        # ===================================================================
+        if not all_email_targets or not all_offers:
+            steps.append(_make_step_result("H: CEO承認申請", STEP_SKIP,
+                                           warnings=["ターゲットまたはオファーなし"]))
+        else:
+            if not _budget_check(steps, run_id, start_time):
+                return
+
+            logger.info("=" * 40 + " Phase H: CEO承認申請")
+            update_status("orchestrate_v2", "running", "H: CEO承認メール申請中...")
+
+            total_submitted = 0
+            for combo in e_combos:
+                combo_name = combo.get("business_name", "unknown")
+                slug = generate_slug(combo_name)
+                business_id = f"{run_id[:8]}-{slug}"
+
+                # Get targets for this combo
+                combo_targets = [
+                    t for t in all_email_targets
+                    if t.get("business_id") == business_id
+                ]
+                if not combo_targets:
+                    continue
+
+                # Get best offer for this combo
+                combo_offer = None
+                for o in all_offers:
+                    if o.get("payer", "") == combo.get("target", ""):
+                        combo_offer = o
+                        break
+                if not combo_offer and all_offers:
+                    combo_offer = all_offers[0]
+
+                if not combo_offer:
+                    continue
+
+                try:
+                    submitted = submit_for_approval(
+                        run_id=run_id,
+                        business_id=business_id,
+                        offer=combo_offer,
+                        targets=combo_targets,
+                        sender_name=YOUR_NAME,
+                    )
+                    total_submitted += submitted
+                except Exception as e:
+                    logger.warning(f"H failed for {combo_name}: {e}")
+
+            if total_submitted:
+                steps.append(_make_step_result("H: CEO承認申請", STEP_OK,
+                                               count=total_submitted))
+                notify(
+                    f"👔 *CEO承認待ち* — {total_submitted}件のメール送信申請があります。\n"
+                    f"`mail_approval` シートで GO/STOP を記入してください。"
+                )
+            else:
+                steps.append(_make_step_result("H: CEO承認申請", STEP_WARN,
+                                               warnings=["申請0件"]))
 
         # ===================================================================
         # Report
@@ -884,23 +771,20 @@ def main():
         elapsed = time.time() - start_time
         total_duration = f"{int(elapsed // 60)}分{int(elapsed % 60)}秒"
 
-        send_pipeline_report(
-            steps, run_id, lp_check, total_duration,
-            passed_combo_count=len(passed_combos),
-            offer_count=len(all_offers),
-        )
+        budget_info = check_budget_gate()
+        send_pipeline_report(steps, run_id, total_duration, budget_info)
 
-        # Final status
         has_errors = any(s["status"] == STEP_FAIL for s in steps)
         final_status = "error" if has_errors else "success"
         step_summary = ", ".join(
-            f"{s['name'].split(':')[0]}: {s.get('count', 0)}件" for s in steps if s.get("count")
+            f"{s['name'].split(':')[0].strip()}: {s.get('count', 0)}件"
+            for s in steps if s.get("count")
         )
 
         v2_metrics: dict = {
             "run_id": run_id,
             "total_duration_sec": int(elapsed),
-            "lp_status": lp_check["status"],
+            "budget_jpy": budget_info.get("cumulative_jpy", 0),
         }
         for s in steps:
             name = s["name"]
@@ -909,22 +793,18 @@ def main():
                 v2_metrics["types_generated"] = count
             elif "Layer2" in name:
                 v2_metrics["combos_generated"] = count
-            elif "検索需要" in name:
-                v2_metrics["sv_passed"] = count
+            elif "需要検証" in name:
+                v2_metrics["demand_verified"] = count
             elif "競合" in name:
-                v2_metrics["competitors_analyzed"] = count
+                v2_metrics["competitor_passed"] = count
             elif "オファー" in name:
                 v2_metrics["offers_generated"] = count
-            elif "優先度" in name:
-                v2_metrics["priority_scored"] = count
-            elif "SEO" in name:
-                v2_metrics["seo_keywords"] = count
-            elif "GTM" in name:
-                v2_metrics["gtm_channels"] = count
-            elif "ターゲット" in name:
-                v2_metrics["targets_collected"] = count
-            elif "LPガード" in name:
-                v2_metrics["lp_ready"] = 1 if lp_check["status"] == "READY" else 0
+            elif "LP" in name:
+                v2_metrics["lp_ready"] = count
+            elif "メール収集" in name:
+                v2_metrics["email_targets"] = count
+            elif "CEO" in name:
+                v2_metrics["approval_submitted"] = count
 
         update_status(
             "orchestrate_v2", final_status,

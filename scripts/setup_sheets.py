@@ -308,6 +308,124 @@ SHEETS = {
         "published_at",
         "generated_at",
     ],
+    # ---------------------------------------------------------------
+    # v2 追加シート — コスト追跡・メール・需要検証・Validation
+    # ---------------------------------------------------------------
+    "cost_tracking": [
+        "run_id",
+        "timestamp",
+        "phase",
+        "api_name",
+        "input_tokens",
+        "output_tokens",
+        "used_search",
+        "cost_jpy",
+        "note",
+    ],
+    "demand_verification_log": [
+        "run_id",
+        "group_id",
+        "keywords",
+        "suggest_result",
+        "gemini_grounding_result",
+        "sns_pain_result",
+        "verdict",          # CONFIRMED / WEAK / NOT_FOUND
+        "detail_json",
+        "timestamp",
+    ],
+    "email_targets": [
+        "run_id",
+        "business_id",
+        "company_name",
+        "email",
+        "source_url",
+        "region",
+        "industry",
+        "status",           # new / sent / replied / bounced
+        "collected_at",
+    ],
+    "mail_approval": [
+        "run_id",
+        "business_id",
+        "offer_name",
+        "target_company",
+        "target_email",
+        "subject",
+        "body_text",
+        "ceo_decision",     # pending / approved / rejected
+        "decided_at",
+        "created_at",
+    ],
+    "mail_sent_log": [
+        "run_id",
+        "business_id",
+        "target_email",
+        "subject",
+        "sent_at",
+        "gmail_message_id",
+        "status",           # sent / failed / bounced
+        "error_detail",
+    ],
+    "validation_score_log": [
+        "run_id",
+        "business_id",
+        "evaluation_date",
+        "emails_sent",
+        "replies_received",
+        "inquiries_received",
+        "rank",             # A / B / C / D
+        "action",           # expand / extend / ceo_review / stop
+        "detail_json",
+    ],
+    # ---------------------------------------------------------------
+    # v2 探索エンジン — 型・コンボ・検索ボリューム
+    # ---------------------------------------------------------------
+    "business_model_types": [
+        "run_id",
+        "type_id",
+        "axis",
+        "prompt_id",
+        "type_name",
+        "description",
+        "revenue_model",
+        "example",
+        "merged_from",
+        "generated_at",
+    ],
+    "business_combos": [
+        "run_id",
+        "combo_id",
+        "type_id",
+        "business_name",
+        "target",
+        "deliverable",
+        "price_model",
+        "monthly_300_path",
+        "generated_at",
+    ],
+    "search_volume_log": [
+        "run_id",
+        "keyword",
+        "monthly_volume",
+        "source",
+        "checked_at",
+    ],
+    "competitor_pricing_log": [
+        "run_id",
+        "market",
+        "company_name",
+        "plan_name",
+        "price",
+        "price_source_url",
+    ],
+    "priority_score_log": [
+        "run_id",
+        "business_id",
+        "combo_id",
+        "score",
+        "detail_json",
+        "scored_at",
+    ],
 }
 
 # Default settings to seed
@@ -315,13 +433,10 @@ DEFAULT_SETTINGS = [
     ["target_industries", "エネルギー,IT,建設,製造", "事業案生成で探索する業界カテゴリ"],
     ["trend_keywords", "BESS,AI,DX,脱炭素,SaaS", "事業案生成で参照するトレンドキーワード"],
     ["ideas_per_run", "3", "1回の実行で生成する事業案の数"],
-    ["idea_direction_notes", "", "事業案生成の方向性メモ（自由記述）"],
+    ["idea_direction_notes", "建設業界の実務課題を軸に、許認可(有料職業紹介/特定技能/M&A登録支援)活用型・受託/BPO/エージェント型で展開。AI/SaaSは禁止。具体的納品物(レポート/書類作成/マッチング/代行)で即決オファーを設計。", "事業案生成の方向性メモ"],
     ["sns_posts_per_day", "2", "1日あたりのSNS投稿数"],
     ["form_sales_per_day", "5", "1日あたりのフォーム営業数"],
-    ["exploration_markets", "エネルギー,IT,建設,製造,物流", "探索フェーズで調査する市場カテゴリ"],
-    ["exploration_segments_per_market", "3", "各市場で調査するセグメント数"],
-    ["selection_top_n", "3", "市場選定で承認候補にする上位市場数"],
-    ["competitors_per_market", "5", "各選定市場で分析する競合数"],
+    ["competitors_per_market", "20", "各選定市場で分析する競合数（Gemini grounding）"],
     # exploration_scoring_weights — v2で廃止（スコアリング禁止）
     ["market_direction_notes", "", "市場探索・選定の方向性メモ（自由記述）"],
     ["use_ceo_profile", "false", "trueでCEO経歴スコアリング有効"],
@@ -341,6 +456,14 @@ DEFAULT_SETTINGS = [
     ["expansion_min_inquiries", "5", "拡張判定に必要な最低問い合わせ数"],
     ["expansion_min_deal_rate", "0.1", "拡張判定に必要な最低成約率"],
     ["expansion_min_days", "14", "拡張判定に必要な最低運用日数"],
+    # v2 追加設定
+    ["gmail_sender_email", "info02@shokunin-san.com", "Gmail API送信元アドレス"],
+    ["mail_daily_limit", "50", "1日あたりのメール送信上限"],
+    ["cost_warn_jpy", "25000", "月間API費用の警告閾値（円）"],
+    ["cost_hard_stop_jpy", "30000", "月間API費用の強制停止閾値（円）"],
+    ["max_sv_combos", "50", "需要検証に進めるコンボ最大数"],
+    ["max_competitor_combos", "5", "競合分析に進めるコンボ最大数"],
+    ["validation_period_days", "14", "Validation評価期間（日数）"],
 ]
 
 
