@@ -356,6 +356,98 @@ def validate_checklist_evaluation(data: list | dict) -> ValidationResult:
     )
 
 
+# ---------------------------------------------------------------------------
+# Layer 1: Business Model Type validation
+# ---------------------------------------------------------------------------
+TYPE_REQUIRED_FIELDS = [
+    "type_name", "description", "revenue_model", "example",
+]
+
+
+def validate_business_model_types(
+    data: list | dict,
+    min_count: int = 10,
+) -> ValidationResult:
+    """Validate Layer 1 business model type output."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or len(data) == 0:
+        return ValidationResult(valid=False, errors=["空の結果または不正な型"])
+
+    if len(data) < min_count:
+        warnings.append(f"最低{min_count}型に対し{len(data)}型のみ")
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"型[{i}]: dict型ではありません")
+            continue
+
+        for fname in TYPE_REQUIRED_FIELDS:
+            val = item.get(fname)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                errors.append(f"型[{i}]: 必須フィールド '{fname}' が空")
+
+        desc = item.get("description", "")
+        if isinstance(desc, str) and len(desc) < 10:
+            warnings.append(f"型[{i}]: descriptionが短すぎます ({len(desc)}文字)")
+
+    return ValidationResult(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: Business Combo validation
+# ---------------------------------------------------------------------------
+COMBO_REQUIRED_FIELDS = [
+    "business_name", "target", "deliverable", "price_model", "monthly_300_path",
+]
+
+
+def validate_business_combos(
+    data: list | dict,
+    min_count: int = 3,
+) -> ValidationResult:
+    """Validate Layer 2 business combo output."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or len(data) == 0:
+        return ValidationResult(valid=False, errors=["空の結果または不正な型"])
+
+    if len(data) < min_count:
+        warnings.append(f"最低{min_count}件に対し{len(data)}件のみ")
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"コンボ[{i}]: dict型ではありません")
+            continue
+
+        for fname in COMBO_REQUIRED_FIELDS:
+            val = item.get(fname)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                errors.append(f"コンボ[{i}]: 必須フィールド '{fname}' が空")
+
+        name = item.get("business_name", "")
+        if isinstance(name, str) and len(name) < 10:
+            warnings.append(f"コンボ[{i}]: business_nameが短すぎます ({len(name)}文字)")
+
+    return ValidationResult(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        data=data,
+    )
+
+
 # ===========================================================================
 # V2 Gate Validators — 証拠ベースPASS/FAIL判定（スコアリング禁止）
 # ===========================================================================
