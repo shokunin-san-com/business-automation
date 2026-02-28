@@ -64,20 +64,20 @@ export async function generateMetadata({
   };
 }
 
-function ArticleCTA({ lpUrl }: { lpUrl: string }) {
+function ArticleCTA({ lpUrl, businessName }: { lpUrl: string; businessName: string }) {
   return (
     <div className="mt-12 rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-8 text-center">
       <h3 className="text-xl font-bold text-gray-800">
-        住宅塗装の見積もりを自動化しませんか？
+        {businessName}に興味がありますか？
       </h3>
       <p className="mt-3 text-sm text-gray-500 leading-relaxed max-w-md mx-auto">
-        AIが顧客の要望を反映した最適な見積もりを自動生成。初月無料でお試しいただけます。
+        AIを活用した業務自動化で、効率化とコスト削減を実現します。
       </p>
       <Link
         href={lpUrl}
         className="mt-5 inline-block rounded-lg bg-blue-600 px-8 py-3 text-sm font-bold text-white transition hover:bg-blue-700"
       >
-        無料で試してみる →
+        詳しくはこちら →
       </Link>
     </div>
   );
@@ -265,7 +265,7 @@ export default async function ArticlePage({
             />
 
             {/* CTA */}
-            <ArticleCTA lpUrl={lpUrl} />
+            <ArticleCTA lpUrl={lpUrl} businessName={business.display_name} />
 
             {/* Related Posts */}
             {related.length > 0 && (
@@ -308,9 +308,9 @@ export default async function ArticlePage({
           <aside className="hidden lg:col-span-4 lg:block">
             <div className="sticky top-24 space-y-6">
               <div className="rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 p-5 text-white">
-                <h3 className="text-sm font-bold">見積もり自動化ツール</h3>
+                <h3 className="text-sm font-bold">{business.display_name}</h3>
                 <p className="mt-2 text-xs text-blue-100 leading-relaxed">
-                  AIが顧客の要望を反映した最適な見積もりを自動生成。
+                  AIを活用した業務自動化で、効率化とコスト削減を実現します。
                 </p>
                 <Link
                   href={lpUrl}

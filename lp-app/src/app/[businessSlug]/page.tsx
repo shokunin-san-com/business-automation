@@ -148,19 +148,21 @@ function Sidebar({
   activeCategory,
   basePath,
   lpUrl,
+  businessName,
 }: {
   recentPosts: BlogArticleSummary[];
   allCategories: string[];
   activeCategory: string;
   basePath: string;
   lpUrl: string;
+  businessName: string;
 }) {
   return (
     <div className="sticky top-24 space-y-6">
       <div className="rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 p-5 text-white">
-        <h3 className="text-sm font-bold">見積もり自動化に興味がありますか？</h3>
+        <h3 className="text-sm font-bold">{businessName}に興味がありますか？</h3>
         <p className="mt-2 text-xs text-blue-100 leading-relaxed">
-          AIが顧客の要望を反映した最適な見積もりを自動生成。
+          AIを活用した業務自動化で、効率化とコスト削減を実現します。
         </p>
         <Link
           href={lpUrl}
@@ -350,6 +352,7 @@ export default async function BusinessBlogPage({
               activeCategory={category || ""}
               basePath={basePath}
               lpUrl={lpUrl}
+              businessName={business.display_name}
             />
           </div>
         </div>
