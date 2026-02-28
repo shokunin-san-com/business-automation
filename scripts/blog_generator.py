@@ -30,7 +30,7 @@ logger = get_logger("blog_generator", "blog_generator.log")
 
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
-LP_BASE_URL = "https://lp-app-pi.vercel.app"
+LP_BASE_URL = "https://shokunin-san.xyz"
 DEFAULT_MEDIA_ID = "shokunin-san"
 
 # 10 universal category types (labels are generated dynamically per market)
@@ -589,32 +589,82 @@ def generate_seo_articles(
     return total
 
 
+def _get_all_business_ids() -> list[str]:
+    """Get all unique business_ids from lp_content sheet that need blog articles."""
+    lp_rows = get_all_rows("lp_content")
+    blog_rows = get_all_rows("blog_articles")
+
+    # All business IDs that have LPs
+    lp_biz_ids = {r.get("business_id", "") for r in lp_rows if r.get("business_id")}
+
+    # Business IDs that already have blog articles
+    blog_biz_ids = {r.get("business_id", "") for r in blog_rows if r.get("business_id")}
+
+    # Return business IDs that have LPs but no blog articles yet
+    needs_blog = lp_biz_ids - blog_biz_ids
+    if not needs_blog:
+        logger.info(f"All {len(lp_biz_ids)} businesses already have blog articles")
+        # Fall back to all LP businesses (may generate additional articles)
+        return sorted(lp_biz_ids)
+
+    logger.info(f"Found {len(needs_blog)} businesses needing blog articles (of {len(lp_biz_ids)} total)")
+    return sorted(needs_blog)
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate blog articles")
-    parser.add_argument("--business-id", required=True, help="Target business ID (market name)")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--business-id", help="Target business ID (market name)")
+    group.add_argument("--all", action="store_true", help="Generate for ALL businesses with LPs")
     parser.add_argument("--media-id", default=DEFAULT_MEDIA_ID, help="Media ID (default: shokunin-san)")
     parser.add_argument("--seo-mode", action="store_true", help="Use SEO keyword-driven generation")
     parser.add_argument("--run-id", default="", help="Pipeline run ID (for SEO mode)")
     parser.add_argument("--max-articles", type=int, default=8, help="Max articles for SEO batch")
     args = parser.parse_args()
 
-    logger.info(f"=== Blog generator start: {args.business_id} (media: {args.media_id}) ===")
-
-    if args.seo_mode:
-        total = generate_seo_articles(
-            business_id=args.business_id,
-            run_id=args.run_id or f"manual_{uuid.uuid4().hex[:8]}",
-            market_name=args.business_id,
-            media_id=args.media_id,
-            max_articles=args.max_articles,
-        )
+    # Determine target business IDs
+    if args.all:
+        business_ids = _get_all_business_ids()
+        if not business_ids:
+            logger.info("No businesses found in lp_content. Nothing to generate.")
+            slack_notify(":page_facing_up: ブログ生成: 対象事業案なし")
+            return
+        logger.info(f"=== Blog generator start: --all mode, {len(business_ids)} businesses ===")
     else:
-        total = generate_articles(business_id=args.business_id, media_id=args.media_id)
+        business_ids = [args.business_id]
+        logger.info(f"=== Blog generator start: {args.business_id} (media: {args.media_id}) ===")
 
-    logger.info(f"=== Blog generator complete: {total} articles generated ===")
+    grand_total = 0
+    for i, biz_id in enumerate(business_ids, 1):
+        logger.info(f"--- Business [{i}/{len(business_ids)}]: {biz_id[:40]} ---")
+        try:
+            if args.seo_mode:
+                total = generate_seo_articles(
+                    business_id=biz_id,
+                    run_id=args.run_id or f"manual_{uuid.uuid4().hex[:8]}",
+                    market_name=biz_id,
+                    media_id=args.media_id,
+                    max_articles=args.max_articles,
+                )
+            else:
+                total = generate_articles(business_id=biz_id, media_id=args.media_id)
+            grand_total += total
+            logger.info(f"  → {total} articles generated for {biz_id[:30]}")
+        except Exception as e:
+            logger.error(f"Failed to generate for {biz_id[:30]}: {e}", exc_info=True)
+            continue
+
+    logger.info(f"=== Blog generator complete: {grand_total} articles across {len(business_ids)} businesses ===")
+
+    # Summary notification for --all mode
+    if args.all and grand_total > 0:
+        slack_notify(
+            f":page_facing_up: ブログ記事を *{grand_total}件* 自動生成しました\n"
+            f"対象事業: {len(business_ids)}件"
+        )
     # SEO mode notification (generate_articles already has built-in Slack notification)
-    if total > 0 and args.seo_mode:
+    elif not args.all and grand_total > 0 and args.seo_mode:
         blog_url = LP_BASE_URL
         try:
             from utils.supabase_client import get_client
@@ -624,7 +674,7 @@ def main():
         except Exception:
             pass
         slack_notify(
-            f":page_facing_up: SEOブログ記事を *{total}件* 生成しました\n"
+            f":page_facing_up: SEOブログ記事を *{grand_total}件* 生成しました\n"
             f"事業: {args.business_id[:30]}\n"
             f"ブログ: {blog_url}"
         )
