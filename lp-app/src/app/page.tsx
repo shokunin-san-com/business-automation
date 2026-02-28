@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getAllBusinesses } from "@/lib/business-data";
 import { getAllArticles } from "@/lib/blog-data";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const businesses = await getAllBusinesses();
 
