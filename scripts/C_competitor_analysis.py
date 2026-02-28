@@ -30,6 +30,21 @@ from utils.validators import validate_competitor_20
 logger = get_logger("competitor_analysis", "competitor_analysis.log")
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
+# Pricing scraping
+import re
+import time as _time
+import requests
+from bs4 import BeautifulSoup
+
+SCRAPE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+PRICING_SHEET = "competitor_pricing_log"
+PRICING_HEADERS = [
+    "run_id", "market_name", "company_name", "company_url",
+    "price_url", "price_text", "price_range", "scraped_at",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,6 +109,122 @@ def _already_analyzed(run_id: str) -> bool:
         return any(r.get("run_id") == run_id for r in rows)
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Pricing scraper
+# ---------------------------------------------------------------------------
+
+def _scrape_price_from_url(url: str) -> dict:
+    """Scrape pricing information from a competitor's price page.
+
+    Returns {price_text, price_range} or empty strings on failure.
+    """
+    if not url or not url.startswith("http"):
+        return {"price_text": "", "price_range": ""}
+
+    try:
+        resp = requests.get(url, headers=SCRAPE_HEADERS, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Remove script/style tags
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+
+        text = soup.get_text(separator=" ", strip=True)
+
+        # Find price patterns: ¥XX,XXX / XX万円 / XX,XXX円
+        price_patterns = [
+            r"¥[\d,]+",
+            r"[\d,]+円",
+            r"\d+万円",
+            r"月額[\d,]+円",
+            r"初期費用[\d,]+円",
+            r"[\d,]+円[/／]月",
+            r"[\d.]+万円[/／]月",
+        ]
+
+        found_prices = []
+        for pattern in price_patterns:
+            matches = re.findall(pattern, text)
+            found_prices.extend(matches[:5])
+
+        if found_prices:
+            price_text = " | ".join(found_prices[:5])
+            # Determine range
+            nums = []
+            for p in found_prices:
+                n = re.findall(r"[\d.]+", p.replace(",", ""))
+                if n:
+                    val = float(n[0])
+                    if "万" in p:
+                        val *= 10000
+                    nums.append(val)
+            if nums:
+                low, high = min(nums), max(nums)
+                price_range = f"¥{int(low):,}〜¥{int(high):,}" if low != high else f"¥{int(low):,}"
+            else:
+                price_range = ""
+            return {"price_text": price_text, "price_range": price_range}
+
+    except Exception as e:
+        logger.warning(f"Price scrape failed for {url}: {e}")
+
+    return {"price_text": "", "price_range": ""}
+
+
+def scrape_competitor_pricing(
+    competitors: list[dict],
+    run_id: str,
+    market_name: str,
+    max_scrape: int = 20,
+    delay: float = 1.5,
+) -> list[dict]:
+    """Scrape pricing from competitor price_url pages.
+
+    Saves results to competitor_pricing_log sheet.
+    Returns list of pricing results.
+    """
+    from utils.sheets_client import ensure_sheet_exists
+    ensure_sheet_exists(PRICING_SHEET, PRICING_HEADERS)
+
+    results = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    rows_to_save = []
+
+    for comp in competitors[:max_scrape]:
+        company = comp.get("company_name", "")
+        price_url = comp.get("price_url", "")
+
+        if not price_url:
+            results.append({"company_name": company, "price_text": "", "price_range": ""})
+            continue
+
+        logger.info(f"Scraping price: {company} → {price_url[:60]}")
+        pricing = _scrape_price_from_url(price_url)
+        pricing["company_name"] = company
+
+        rows_to_save.append([
+            run_id, market_name, company,
+            comp.get("url", ""), price_url,
+            pricing["price_text"][:200],
+            pricing["price_range"],
+            now,
+        ])
+
+        results.append(pricing)
+        _time.sleep(delay)
+
+    if rows_to_save:
+        from utils.sheets_client import append_rows as _append
+        _append(PRICING_SHEET, rows_to_save)
+        logger.info(f"Saved {len(rows_to_save)} pricing records")
+
+    scraped = sum(1 for r in results if r.get("price_text"))
+    logger.info(f"Pricing scraped: {scraped}/{len(results)} competitors had price data")
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -227,15 +358,27 @@ def main(run_id: str | None = None):
         # Save to sheets
         count = save_competitors_to_sheets(analysis, effective_run_id, market_name)
 
+        # Phase 2: Scrape actual pricing from competitor websites
+        competitors = analysis.get("competitors", [])
+        pricing_results = []
+        if competitors:
+            logger.info(f"Phase 2: Scraping pricing for {len(competitors)} competitors...")
+            update_status("C_competitor_analysis", "running", f"価格スクレイピング中: {market_name}")
+            pricing_results = scrape_competitor_pricing(
+                competitors, effective_run_id, market_name
+            )
+
         gap_top3 = analysis.get("gap_top3", [])
         gap_summary = " / ".join(
             g.get("gap", "")[:30] for g in gap_top3[:3]
         ) if gap_top3 else "ギャップ未検出"
 
+        pricing_count = sum(1 for p in pricing_results if p.get("price_text"))
+
         if count > 0:
             slack_notify(
                 f":crossed_swords: V2競合分析完了: *{market_name}*\n"
-                f"  {count}社を分析\n"
+                f"  {count}社を分析 | 価格取得{pricing_count}社\n"
                 f"  穴トップ3: {gap_summary}"
             )
 

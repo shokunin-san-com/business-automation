@@ -1,9 +1,22 @@
 """
 orchestrate_v2.py — V2 Evidence-gate pipeline orchestrator.
 
-Flow: A0 → A1q → A1d → EX → C(20) → 0(3offers) → LP-guard → Notify.
+Flow (Phase 3):
+  A0 → SV(検索需要) → C(20社+価格) → W(勝ち筋) → 0(3案) → U(UE) → PR → LP-guard
+  → K(SEO KW) → S(GTM) → Notify.
 
-All scoring is **prohibited**. Decisions are PASS/FAIL based on evidence URLs.
+Phase 2-3 changes:
+  - A1q/A1d/EX removed → replaced by SV (search_volume.py)
+  - Self-review after A0, C, and 0 steps
+  - Priority scoring via priority_scorer.py
+  - Competitor pricing scraping integrated in C step
+  - W: Win strategy generation after competitor analysis
+  - U: Agency unit economics after offer generation
+  - K: SEO keyword research for LP-ready markets
+  - S: Go-to-market plan for LP-ready markets
+
+All scoring is **prohibited** for gate decisions.
+Decisions are PASS/FAIL based on real data (search results, ads, URLs).
 run_id is generated once and propagated to all steps for traceability.
 
 Continuous mode: settings シートの v2_continuous_mode=true で連続実行。
@@ -22,6 +35,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import DATA_DIR, GCP_PROJECT_ID, get_logger
@@ -39,13 +53,17 @@ CONTINUOUS_COOLDOWN_SEC = 60  # 再トリガー前の待機時間
 # Import V2 step modules
 from A_market_research import (
     step_a0_generate_micro_markets,
-    step_a1_quick_gate,
-    step_a1_deep_gate,
-    check_exploration_lane,
     save_settings_snapshot,
 )
-from C_competitor_analysis import analyze_competitors_20, save_competitors_to_sheets
+from C_competitor_analysis import analyze_competitors_20, save_competitors_to_sheets, scrape_competitor_pricing
 from utils.pdf_knowledge import get_knowledge_summary
+from utils.search_volume import verify_batch as sv_verify_batch, ai_demand_deep_check
+from utils.priority_scorer import score_markets as priority_score
+from utils.win_strategy import generate_win_strategy
+from utils.unit_economics import calculate_agency_ue
+from utils.seo_keywords import research_keywords as seo_research
+from utils.go_to_market import generate_gtm_plan
+from utils.claude_client import generate_json_with_retry
 
 logger = get_logger("orchestrate_v2", "orchestrate_v2.log")
 
@@ -58,11 +76,14 @@ STEP_SKIP = "⏭️ スキップ"
 # Sheet names for each step (for report links)
 STEP_SHEET_MAP = {
     "A0": ["micro_market_list"],
-    "A1q": ["micro_market_list"],
-    "A1d": ["gate_decision_log"],
-    "EX": ["exploration_lane_log"],
-    "C": ["competitor_20_log"],
+    "SV": ["search_volume_log"],
+    "C": ["competitor_20_log", "competitor_pricing_log"],
+    "W": ["win_strategy_log"],
     "0": ["offer_3_log"],
+    "U": ["unit_economics_log"],
+    "PR": ["priority_score_log"],
+    "K": ["seo_keywords_log"],
+    "S": ["gtm_plan_log"],
     "LP": ["lp_ready_log"],
 }
 
@@ -95,15 +116,63 @@ def _make_step_result(
 
 
 # ---------------------------------------------------------------------------
+# Self-review — AI checks its own output for quality
+# ---------------------------------------------------------------------------
+
+def _self_review(step_name: str, data: Any, context: str = "") -> dict:
+    """Run AI self-review on step output.
+
+    Returns {passed: bool, issues: list[str], suggestions: list[str]}.
+    """
+    if not data:
+        return {"passed": True, "issues": [], "suggestions": []}
+
+    data_sample = json.dumps(data, ensure_ascii=False, default=str)[:3000]
+
+    prompt = (
+        f"以下は「{step_name}」ステップの出力です。品質をレビューしてください。\n\n"
+        f"出力データ（先頭3000文字）:\n{data_sample}\n\n"
+        f"コンテキスト: {context}\n\n"
+        f"以下をJSON形式で出力:\n"
+        f'{{"passed": true/false,\n'
+        f'  "issues": ["問題点1", "問題点2"],\n'
+        f'  "suggestions": ["改善提案1"]}}\n\n'
+        f"判定基準:\n"
+        f"- 架空のURL/企業名がないか\n"
+        f"- 必須フィールドが埋まっているか\n"
+        f"- 業務代行型オファーの方針に合致しているか\n"
+        f"- データの整合性があるか"
+    )
+
+    try:
+        result = generate_json_with_retry(
+            prompt=prompt,
+            system="品質レビュアーとして、出力の問題点を指摘してください。問題なければpassedをtrueに。",
+            max_tokens=2048,
+            temperature=0.2,
+            max_retries=1,
+        )
+        if isinstance(result, list):
+            result = result[0] if result else {}
+        return {
+            "passed": result.get("passed", True),
+            "issues": result.get("issues", []),
+            "suggestions": result.get("suggestions", []),
+        }
+    except Exception as e:
+        logger.warning(f"Self-review failed for {step_name}: {e}")
+        return {"passed": True, "issues": [], "suggestions": [f"レビュー実行エラー: {e}"]}
+
+
+# ---------------------------------------------------------------------------
 # LP readiness check (local — no API call, direct Sheets check)
 # ---------------------------------------------------------------------------
 
 def check_lp_ready(run_id: str) -> dict:
     """Check if all conditions for LP creation are met.
 
-    Conditions:
-    1. gate_decision_log has PASS for this run_id
-       (exploration_lane ACTIVE is NOT sufficient — evidence gate must pass)
+    Phase 2 conditions:
+    1. search_volume_log has PASS records for this run_id
     2. competitor_20_log has records for this run_id
     3. offer_3_log has 3 complete records for this run_id
 
@@ -112,27 +181,27 @@ def check_lp_ready(run_id: str) -> dict:
     missing = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # 1. Gate check — A1d PASS required (exploration lane alone is not enough)
+    # 1. Search volume check — at least 1 PASS market
     gate_ok = False
     is_exploration_only = False
     try:
-        gate_rows = get_all_rows("gate_decision_log")
-        gate_pass = [r for r in gate_rows if r.get("run_id") == run_id and r.get("status") == "PASS"]
-        if gate_pass:
+        sv_rows = get_all_rows("search_volume_log")
+        sv_pass = [r for r in sv_rows if r.get("run_id") == run_id and r.get("status") == "PASS"]
+        if sv_pass:
             gate_ok = True
-        else:
-            # Check if running via exploration lane
-            lane_rows = get_all_rows("exploration_lane_log")
-            lane_active = [r for r in lane_rows if r.get("run_id") == run_id and r.get("status") == "ACTIVE"]
-            if lane_active:
-                is_exploration_only = True
     except Exception:
         pass
+    # Fallback: check old gate_decision_log for backward compat
     if not gate_ok:
-        if is_exploration_only:
-            missing.append("探索レーン中: A1dゲート未通過（ヒアリングで証拠収集後に再判定が必要）")
-        else:
-            missing.append("gate_decision_log: PASSレコードなし")
+        try:
+            gate_rows = get_all_rows("gate_decision_log")
+            gate_pass = [r for r in gate_rows if r.get("run_id") == run_id and r.get("status") == "PASS"]
+            if gate_pass:
+                gate_ok = True
+        except Exception:
+            pass
+    if not gate_ok:
+        missing.append("search_volume_log: PASS市場なし")
 
     # 2. Competitor check
     competitor_ok = False
@@ -447,8 +516,14 @@ def main():
                                                errors=["0件生成"]))
                 _abort_pipeline(steps, run_id, start_time)
                 return
-            steps.append(_make_step_result("A0: マイクロ市場生成", STEP_OK,
-                                           count=len(micro_markets), data=micro_markets))
+            # Self-review A0
+            a0_review = _self_review("A0", micro_markets[:5], "マイクロ市場生成")
+            a0_warnings = a0_review.get("issues", []) if not a0_review["passed"] else []
+            steps.append(_make_step_result("A0: マイクロ市場生成",
+                                           STEP_WARN if a0_warnings else STEP_OK,
+                                           count=len(micro_markets),
+                                           warnings=a0_warnings,
+                                           data=micro_markets))
         except Exception as e:
             steps.append(_make_step_result("A0: マイクロ市場生成", STEP_FAIL,
                                            errors=[str(e)]))
@@ -456,89 +531,35 @@ def main():
             return
 
         # ===================================================================
-        # A1q: Quick gate
+        # SV: Search volume verification (replaces A1q + A1d + EX)
         # ===================================================================
-        logger.info("=" * 40 + " A1q: 浅いゲート")
-        update_status("orchestrate_v2", "running", f"A1q: {len(micro_markets)}市場をゲート判定中...")
-        a1q_passed = []
-        try:
-            a1q_passed, a1q_all = step_a1_quick_gate(micro_markets, knowledge_context, run_id)
-            if not a1q_passed:
-                steps.append(_make_step_result("A1q: 浅いゲート", STEP_FAIL,
-                                               count=0,
-                                               errors=[f"全{len(micro_markets)}市場FAIL"]))
-            else:
-                steps.append(_make_step_result("A1q: 浅いゲート", STEP_OK,
-                                               count=len(a1q_passed),
-                                               data=a1q_passed))
-        except Exception as e:
-            logger.error(f"A1q exception (continuing): {e}")
-            steps.append(_make_step_result("A1q: 浅いゲート", STEP_FAIL,
-                                           errors=[str(e)]))
-
-        # ===================================================================
-        # A1d: Deep gate (max 5 markets)
-        # ===================================================================
+        logger.info("=" * 40 + " SV: 検索需要検証")
+        update_status("orchestrate_v2", "running", f"SV: {len(micro_markets)}市場の検索需要を検証中...")
         passed_markets = []
-        failed_markets = []
-        if a1q_passed:
-            logger.info("=" * 40 + " A1d: 深いゲート")
-            update_status("orchestrate_v2", "running", f"A1d: {len(a1q_passed[:5])}市場を深いゲート判定中...")
-            try:
-                a1d_results, gate_log = step_a1_deep_gate(
-                    a1q_passed, settings, knowledge_context, run_id
-                )
-                passed_markets = [r for r in a1d_results if r.get("status") == "PASS"]
-                failed_markets = [r for r in a1d_results if r.get("status") != "PASS"]
-
-                if passed_markets:
-                    steps.append(_make_step_result("A1d: 深いゲート", STEP_OK,
-                                                   count=len(passed_markets),
-                                                   data=passed_markets))
-                else:
-                    steps.append(_make_step_result("A1d: 深いゲート", STEP_WARN,
-                                                   count=0,
-                                                   warnings=[f"全{len(a1q_passed[:5])}市場FAIL — 探索レーン確認中"]))
-            except Exception as e:
-                logger.error(f"A1d exception (continuing): {e}")
-                steps.append(_make_step_result("A1d: 深いゲート", STEP_FAIL,
-                                               errors=[str(e)]))
-        else:
-            steps.append(_make_step_result("A1d: 深いゲート", STEP_SKIP,
-                                           warnings=["A1q PASS市場0件"]))
-
-        # ===================================================================
-        # EX: Exploration lane check
-        # ===================================================================
-        exploration = None
-        if failed_markets:
-            logger.info("=" * 40 + " EX: 探索レーン判定")
-            update_status("orchestrate_v2", "running", "EX: 探索レーン判定中...")
-            try:
-                exploration = check_exploration_lane(failed_markets, run_id)
-                if exploration:
-                    steps.append(_make_step_result("EX: 探索レーン", STEP_OK,
-                                                   count=1,
-                                                   data=exploration))
-                else:
-                    steps.append(_make_step_result("EX: 探索レーン", STEP_SKIP,
-                                                   warnings=["該当市場なし"]))
-            except Exception as e:
-                steps.append(_make_step_result("EX: 探索レーン", STEP_WARN,
-                                               warnings=[str(e)]))
+        try:
+            sv_passed, sv_all = sv_verify_batch(micro_markets, run_id, max_markets=10)
+            if not sv_passed:
+                steps.append(_make_step_result("SV: 検索需要検証", STEP_FAIL,
+                                               count=0,
+                                               errors=[f"全{len(sv_all)}市場FAIL — 検索需要不足"]))
+            else:
+                steps.append(_make_step_result("SV: 検索需要検証", STEP_OK,
+                                               count=len(sv_passed),
+                                               data=sv_passed))
+            passed_markets = sv_passed
+        except Exception as e:
+            logger.error(f"SV exception (continuing): {e}")
+            steps.append(_make_step_result("SV: 検索需要検証", STEP_FAIL,
+                                           errors=[str(e)]))
 
         # Check: do we have any market to proceed with?
         active_market = None
         if passed_markets:
-            # Use first PASS market (同時1件ルール)
             active_market = passed_markets[0]
-        elif exploration:
-            active_market = exploration
 
         if not active_market:
             steps.append(_make_step_result("判定", STEP_FAIL,
-                                           errors=["PASS市場0件 + 探索レーン0件 → C/0/LPスキップ"]))
-            # Skip C/0/LP but still send final report (no abort)
+                                           errors=["PASS市場0件 → C/0/LPスキップ"]))
             active_market_name = "N/A"
         else:
             active_market_name = active_market.get("micro_market", "unknown")
@@ -563,22 +584,27 @@ def main():
             logger.info("=" * 40 + f" C: 競合20社分析 ({active_market_name})")
             update_status("orchestrate_v2", "running", f"C: {active_market_name} 競合20社分析中...")
 
-            try:
-                gate_rows = get_all_rows("gate_decision_log")
-                for r in gate_rows:
-                    if r.get("run_id") == run_id and r.get("micro_market") == active_market_name:
-                        gate_result = r
-                        break
-            except Exception:
-                pass
+            # Build context from SV results
+            sv_evidence = active_market.get("evidence_urls", [])
 
             try:
                 micro_market_data = {
                     "micro_market": active_market_name,
-                    "payer": gate_result.get("payer", ""),
-                    "evidence_urls": gate_result.get("evidence_urls", ""),
-                    "blackout_hypothesis": gate_result.get("blackout_hypothesis", ""),
+                    "payer": active_market.get("payer", ""),
+                    "evidence_urls": json.dumps(sv_evidence, ensure_ascii=False) if isinstance(sv_evidence, list) else str(sv_evidence),
+                    "blackout_hypothesis": "",
                 }
+
+                # Also check old gate_result for backward compat
+                gate_result = {}
+                try:
+                    gate_rows = get_all_rows("gate_decision_log")
+                    for r in gate_rows:
+                        if r.get("run_id") == run_id and r.get("micro_market") == active_market_name:
+                            gate_result = r
+                            break
+                except Exception:
+                    pass
 
                 analysis = analyze_competitors_20(
                     micro_market_data, gate_result, knowledge_context, run_id
@@ -591,17 +617,55 @@ def main():
                 gap_file = DATA_DIR / f"gap_top3_{run_id}.json"
                 gap_file.write_text(json.dumps(gap_top3, ensure_ascii=False, indent=2), "utf-8")
 
+                # Phase 2: Scrape competitor pricing
+                competitors = analysis.get("competitors", [])
+                if competitors:
+                    logger.info(f"Scraping pricing for {len(competitors)} competitors...")
+                    update_status("orchestrate_v2", "running", f"C: 価格スクレイピング中...")
+                    scrape_competitor_pricing(competitors, run_id, active_market_name)
+
+                # Self-review C
+                c_review = _self_review("C: 競合20社", analysis, f"市場: {active_market_name}")
+                c_warnings = c_review.get("issues", []) if not c_review["passed"] else []
+
                 if comp_count >= 10:
-                    steps.append(_make_step_result("C: 競合20社", STEP_OK,
-                                                   count=comp_count, data=analysis))
+                    steps.append(_make_step_result("C: 競合20社",
+                                                   STEP_WARN if c_warnings else STEP_OK,
+                                                   count=comp_count,
+                                                   warnings=c_warnings,
+                                                   data=analysis))
                 else:
                     steps.append(_make_step_result("C: 競合20社", STEP_WARN,
                                                    count=comp_count,
-                                                   warnings=[f"{comp_count}社のみ（20社目標）"]))
+                                                   warnings=[f"{comp_count}社のみ（20社目標）"] + c_warnings))
             except Exception as e:
                 logger.error(f"C exception (continuing): {e}")
                 steps.append(_make_step_result("C: 競合20社", STEP_FAIL,
                                                errors=[str(e)]))
+
+            # ---------------------------------------------------------------
+            # W: Win strategy generation
+            # ---------------------------------------------------------------
+            logger.info("=" * 40 + f" W: 勝ち筋戦略 ({active_market_name})")
+            update_status("orchestrate_v2", "running", f"W: {active_market_name} 勝ち筋戦略策定中...")
+            win_strategy = {}
+            try:
+                win_strategy = generate_win_strategy(
+                    market_name=active_market_name,
+                    run_id=run_id,
+                    gap_top3=gap_top3,
+                )
+                if win_strategy and win_strategy.get("positioning"):
+                    steps.append(_make_step_result("W: 勝ち筋戦略", STEP_OK,
+                                                   count=len(win_strategy.get("action_items", [])),
+                                                   data=win_strategy))
+                else:
+                    steps.append(_make_step_result("W: 勝ち筋戦略", STEP_WARN,
+                                                   warnings=["戦略データ不完全"]))
+            except Exception as e:
+                logger.warning(f"W exception (non-fatal): {e}")
+                steps.append(_make_step_result("W: 勝ち筋戦略", STEP_WARN,
+                                               warnings=[str(e)]))
 
             # ---------------------------------------------------------------
             # 0: Offer generation (3 offers)
@@ -669,12 +733,72 @@ def main():
                     from utils.sheets_client import append_rows as _append
                     _append("offer_3_log", offer_rows)
 
-                steps.append(_make_step_result("0: オファー3案", STEP_OK,
-                                               count=len(offers), data=offers))
+                # Self-review offers
+                o_review = _self_review("0: オファー3案", offers, "業務代行型オファー")
+                o_warnings = o_review.get("issues", []) if not o_review["passed"] else []
+
+                steps.append(_make_step_result("0: オファー3案",
+                                               STEP_WARN if o_warnings else STEP_OK,
+                                               count=len(offers),
+                                               warnings=o_warnings,
+                                               data=offers))
             except Exception as e:
                 logger.error(f"0 exception (continuing): {e}")
                 steps.append(_make_step_result("0: オファー3案", STEP_FAIL,
                                                errors=[str(e)]))
+
+        # ===================================================================
+        # U: Agency unit economics (Phase 3)
+        # ===================================================================
+        if active_market:
+            logger.info("=" * 40 + f" U: ユニットエコノミクス ({active_market_name})")
+            update_status("orchestrate_v2", "running", f"U: {active_market_name} UE算出中...")
+            try:
+                # Get offers from step data
+                offer_step = next((s for s in steps if "オファー" in s["name"]), None)
+                offer_data = offer_step.get("data", []) if offer_step else []
+                if offer_data:
+                    ue_results = calculate_agency_ue(
+                        market_name=active_market_name,
+                        run_id=run_id,
+                        offers=offer_data,
+                    )
+                    if ue_results:
+                        steps.append(_make_step_result("U: UE算出", STEP_OK,
+                                                       count=len(ue_results),
+                                                       data=ue_results))
+                    else:
+                        steps.append(_make_step_result("U: UE算出", STEP_WARN,
+                                                       warnings=["UE算出結果なし"]))
+                else:
+                    steps.append(_make_step_result("U: UE算出", STEP_SKIP,
+                                                   warnings=["オファーデータなし"]))
+            except Exception as e:
+                logger.warning(f"U exception (non-fatal): {e}")
+                steps.append(_make_step_result("U: UE算出", STEP_WARN,
+                                               warnings=[str(e)]))
+
+        # ===================================================================
+        # PR: Priority scoring (Phase 2)
+        # ===================================================================
+        if passed_markets:
+            logger.info("=" * 40 + " PR: 優先度スコアリング")
+            update_status("orchestrate_v2", "running", "PR: 優先度スコアリング中...")
+            try:
+                scored = priority_score(run_id, passed_markets)
+                if scored:
+                    top = scored[0]
+                    steps.append(_make_step_result("PR: 優先度", STEP_OK,
+                                                   count=len(scored),
+                                                   data={"top_market": top.get("micro_market", ""),
+                                                         "tier": top.get("priority_tier", "")}))
+                else:
+                    steps.append(_make_step_result("PR: 優先度", STEP_SKIP,
+                                                   warnings=["スコアリング対象なし"]))
+            except Exception as e:
+                logger.warning(f"PR exception (non-fatal): {e}")
+                steps.append(_make_step_result("PR: 優先度", STEP_WARN,
+                                               warnings=[str(e)]))
 
         # ===================================================================
         # LP: Readiness check
@@ -688,6 +812,53 @@ def main():
         else:
             steps.append(_make_step_result("LP: ガードチェック", STEP_WARN,
                                            warnings=[f"BLOCKED: {', '.join(lp_check.get('missing', []))}"]))
+
+        # ===================================================================
+        # K: SEO keyword research (Phase 3) — only if LP READY
+        # ===================================================================
+        seo_kw_data = {}
+        if lp_check["status"] == "READY" and active_market:
+            logger.info("=" * 40 + f" K: SEOキーワード調査 ({active_market_name})")
+            update_status("orchestrate_v2", "running", f"K: {active_market_name} SEOキーワード調査中...")
+            try:
+                seo_kw_data = seo_research(
+                    market_name=active_market_name,
+                    run_id=run_id,
+                    industry=active_market.get("payer", ""),
+                )
+                kw_count = seo_kw_data.get("total_keywords", 0)
+                cal_count = len(seo_kw_data.get("content_calendar", []))
+                steps.append(_make_step_result("K: SEO KW", STEP_OK,
+                                               count=kw_count,
+                                               data={"calendar_entries": cal_count}))
+            except Exception as e:
+                logger.warning(f"K exception (non-fatal): {e}")
+                steps.append(_make_step_result("K: SEO KW", STEP_WARN,
+                                               warnings=[str(e)]))
+
+        # ===================================================================
+        # S: Go-to-market plan (Phase 3) — only if LP READY
+        # ===================================================================
+        if lp_check["status"] == "READY" and active_market:
+            logger.info("=" * 40 + f" S: GTM計画 ({active_market_name})")
+            update_status("orchestrate_v2", "running", f"S: {active_market_name} GTM計画策定中...")
+            try:
+                offer_step = next((s for s in steps if "オファー" in s["name"]), None)
+                offer_data = offer_step.get("data", []) if offer_step else []
+                gtm = generate_gtm_plan(
+                    market_name=active_market_name,
+                    run_id=run_id,
+                    offers=offer_data if isinstance(offer_data, list) else [],
+                    win_strategy=win_strategy if win_strategy else None,
+                )
+                ch_count = len(gtm.get("channels", []))
+                steps.append(_make_step_result("S: GTM計画", STEP_OK,
+                                               count=ch_count,
+                                               data=gtm))
+            except Exception as e:
+                logger.warning(f"S exception (non-fatal): {e}")
+                steps.append(_make_step_result("S: GTM計画", STEP_WARN,
+                                               warnings=[str(e)]))
 
         # ===================================================================
         # Report
@@ -724,20 +895,19 @@ def main():
             count = s.get("count", 0)
             if "A0" in name:
                 v2_metrics["micro_markets_generated"] = count
-            elif "A1q" in name:
-                v2_metrics["a1q_passed"] = count
-                try:
-                    v2_metrics["a1q_failed"] = len(micro_markets) - count
-                except NameError:
-                    v2_metrics["a1q_failed"] = 0
-            elif "A1d" in name:
-                v2_metrics["a1d_passed"] = count
-                try:
-                    v2_metrics["a1d_failed"] = len(a1q_passed[:5]) - count
-                except NameError:
-                    v2_metrics["a1d_failed"] = 0
-            elif "探索レーン" in name:
-                v2_metrics["exploration_lanes"] = count
+            elif "SV" in name:
+                v2_metrics["sv_passed"] = count
+                v2_metrics["sv_total"] = len(micro_markets) if micro_markets else 0
+            elif "勝ち筋" in name:
+                v2_metrics["win_strategy"] = 1 if count else 0
+            elif "UE" in name:
+                v2_metrics["ue_calculated"] = count
+            elif "優先度" in name:
+                v2_metrics["priority_scored"] = count
+            elif "SEO" in name:
+                v2_metrics["seo_keywords"] = count
+            elif "GTM" in name:
+                v2_metrics["gtm_channels"] = count
             elif "競合" in name:
                 v2_metrics["competitors_20"] = count
             elif "オファー" in name:

@@ -287,20 +287,209 @@ def generate_articles(business_id: str, media_id: str = DEFAULT_MEDIA_ID) -> int
     return total_generated
 
 
+def generate_seo_articles(
+    business_id: str,
+    run_id: str,
+    seo_keywords: dict | None = None,
+    market_name: str = "",
+    media_id: str = DEFAULT_MEDIA_ID,
+    max_articles: int = 8,
+) -> int:
+    """Generate SEO-targeted articles based on keyword research data.
+
+    Uses content_calendar from seo_keywords module to create
+    targeted blog articles for each planned keyword.
+
+    Args:
+        business_id: Target business identifier.
+        run_id: Pipeline run ID for traceability.
+        seo_keywords: Output from research_keywords() containing
+            primary_keywords, longtail_keywords, content_calendar.
+        market_name: Market name for context.
+        media_id: Blog media identifier.
+        max_articles: Max articles to generate per batch.
+
+    Returns:
+        Number of articles generated.
+    """
+    if not seo_keywords:
+        try:
+            from utils.seo_keywords import research_keywords
+            seo_keywords = research_keywords(
+                market_name=market_name or business_id,
+                run_id=run_id,
+                industry=market_name,
+            )
+        except Exception as e:
+            logger.error(f"Failed to get SEO keywords: {e}")
+            return 0
+
+    calendar = seo_keywords.get("content_calendar", [])
+    primary_kws = seo_keywords.get("primary_keywords", [])
+    longtail_kws = seo_keywords.get("longtail_keywords", [])
+
+    if not calendar:
+        logger.warning("No content calendar in SEO keywords data.")
+        return 0
+
+    # Build keyword context for better articles
+    kw_context = "主要キーワード:\n"
+    for kw in primary_kws[:5]:
+        kw_context += f"- {kw.get('keyword', '')} ({kw.get('intent', '')})\n"
+    kw_context += "\nロングテール:\n"
+    for kw in longtail_kws[:10]:
+        kw_context += f"- {kw.get('keyword', '')} [{kw.get('topic_cluster', '')}]\n"
+
+    # Check existing slugs
+    existing_slugs: set[str] = set()
+    try:
+        from utils.supabase_client import get_existing_slugs
+        existing_slugs = get_existing_slugs(media_id)
+    except Exception:
+        existing = get_all_rows("blog_articles")
+        existing_slugs = {r.get("slug", "") for r in existing}
+
+    lp_url = f"{LP_BASE_URL}/lp/{quote(business_id, safe='')}"
+    template = jinja_env.get_template("blog_prompt.j2")
+    now_base = datetime.now()
+    total = 0
+
+    for i, entry in enumerate(calendar[:max_articles]):
+        keyword = entry.get("keyword", "")
+        content_type = entry.get("content_type", "記事")
+        title_idea = entry.get("title_idea", keyword)
+
+        if not keyword:
+            continue
+
+        logger.info(f"[SEO {i+1}/{min(len(calendar), max_articles)}] {title_idea[:40]}...")
+
+        prompt = (
+            f"以下のSEOキーワードに最適化されたブログ記事をJSON形式で生成してください。\n\n"
+            f"ターゲットキーワード: {keyword}\n"
+            f"記事タイプ: {content_type}\n"
+            f"タイトル案: {title_idea}\n"
+            f"市場: {market_name or business_id}\n"
+            f"LP URL: {lp_url}\n\n"
+            f"{kw_context}\n\n"
+            f'出力形式:\n'
+            f'{{"title": "SEO最適化タイトル（キーワード含む）",\n'
+            f' "slug": "url-safe-slug",\n'
+            f' "body_html": "<h2>見出し</h2><p>本文...</p>（2000文字以上）",\n'
+            f' "excerpt": "記事の要約（120文字以内）",\n'
+            f' "tags": ["タグ1", "タグ2"],\n'
+            f' "meta_description": "SEOメタディスクリプション（120文字以内）",\n'
+            f' "og_title": "OGPタイトル",\n'
+            f' "og_description": "OGP説明文"}}\n\n'
+            f"制約:\n"
+            f"- タイトルとH2にターゲットキーワードを自然に含める\n"
+            f"- 業務代行型サービスの訴求を本文に含める\n"
+            f"- LP URLへの誘導CTAを記事末尾に入れる\n"
+            f"- ロングテールキーワードも本文中に散りばめる"
+        )
+
+        try:
+            result = generate_json_with_retry(
+                prompt=prompt,
+                system=(
+                    "あなたはBtoB SEOコンテンツライターです。"
+                    "ターゲットキーワードで上位表示を狙える記事を生成してください。"
+                    "指定のJSONオブジェクトで正確に出力してください。"
+                ),
+                max_tokens=8192,
+                temperature=0.7,
+                max_retries=3,
+            )
+
+            if isinstance(result, list):
+                result = result[0] if result else {}
+
+            slug = result.get("slug", "")
+            if not slug or slug in existing_slugs:
+                slug = f"seo-{uuid.uuid4().hex[:8]}"
+
+            published_at = (now_base + timedelta(hours=total + 1)).isoformat()
+
+            tags = result.get("tags", [])
+            if not isinstance(tags, list):
+                tags = [str(tags)] if tags else []
+
+            post_data = {
+                "business_id": business_id,
+                "media_id": media_id,
+                "title": result.get("title", title_idea),
+                "slug": slug,
+                "body_html": result.get("body_html", ""),
+                "excerpt": result.get("excerpt", ""),
+                "category": content_type,
+                "tags": tags,
+                "meta_description": result.get("meta_description", ""),
+                "og_title": result.get("og_title", result.get("title", title_idea)),
+                "og_description": result.get("og_description", ""),
+                "status": "published",
+                "published_at": published_at,
+                "generated_at": now_base.isoformat(),
+            }
+
+            supabase_ok = _try_supabase_upsert(post_data)
+
+            if not supabase_ok:
+                article_id = f"seo_{uuid.uuid4().hex[:12]}"
+                tags_str = json.dumps(tags, ensure_ascii=False)
+                row = [
+                    article_id, business_id,
+                    result.get("title", title_idea), slug,
+                    result.get("body_html", ""),
+                    result.get("excerpt", ""), content_type, tags_str,
+                    result.get("meta_description", ""),
+                    result.get("og_title", ""),
+                    result.get("og_description", ""),
+                    "published", published_at, now_base.isoformat(),
+                ]
+                append_rows("blog_articles", [row])
+
+            try:
+                gcs_upload(f"blog_articles/{slug}.json", post_data)
+            except Exception:
+                pass
+
+            existing_slugs.add(slug)
+            total += 1
+            logger.info(f"  → SEO article: {result.get('title', '')[:40]} [KW: {keyword}]")
+
+        except Exception as e:
+            logger.error(f"Failed to generate SEO article for '{keyword}': {e}")
+            continue
+
+    logger.info(f"SEO batch complete: {total} articles for {market_name or business_id}")
+    return total
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Generate blog articles")
     parser.add_argument("--business-id", required=True, help="Target business ID (market name)")
     parser.add_argument("--media-id", default=DEFAULT_MEDIA_ID, help="Media ID (default: shokunin-san)")
+    parser.add_argument("--seo-mode", action="store_true", help="Use SEO keyword-driven generation")
+    parser.add_argument("--run-id", default="", help="Pipeline run ID (for SEO mode)")
+    parser.add_argument("--max-articles", type=int, default=8, help="Max articles for SEO batch")
     args = parser.parse_args()
 
     logger.info(f"=== Blog generator start: {args.business_id} (media: {args.media_id}) ===")
 
-    total = generate_articles(business_id=args.business_id, media_id=args.media_id)
+    if args.seo_mode:
+        total = generate_seo_articles(
+            business_id=args.business_id,
+            run_id=args.run_id or f"manual_{uuid.uuid4().hex[:8]}",
+            market_name=args.business_id,
+            media_id=args.media_id,
+            max_articles=args.max_articles,
+        )
+    else:
+        total = generate_articles(business_id=args.business_id, media_id=args.media_id)
 
     logger.info(f"=== Blog generator complete: {total} articles generated ===")
     if total > 0:
-        # Get business slug for the blog URL
         blog_url = f"{LP_BASE_URL}"
         try:
             from utils.supabase_client import get_client
@@ -309,8 +498,9 @@ def main():
                 blog_url = f"{LP_BASE_URL}/{res.data['slug']}"
         except Exception:
             pass
+        mode_str = "SEO" if args.seo_mode else "標準"
         slack_notify(
-            f":page_facing_up: ブログ記事を *{total}件* 生成しました\n"
+            f":page_facing_up: ブログ記事を *{total}件* 生成しました ({mode_str})\n"
             f"事業: {args.business_id[:30]}\n"
             f"ブログ: {blog_url}"
         )
