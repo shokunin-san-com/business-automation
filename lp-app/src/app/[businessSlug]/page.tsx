@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAllArticles, getAllCategories } from "@/lib/blog-data";
@@ -43,12 +42,11 @@ function PostCard({ article, basePath }: { article: BlogArticleSummary; basePath
     <article className="group relative flex overflow-hidden rounded-xl bg-white border border-gray-100 transition-all duration-200 hover:border-blue-200 hover:shadow-sm">
       <div className="relative w-32 flex-shrink-0 overflow-hidden sm:w-40 bg-gradient-to-br from-blue-50 to-slate-50">
         {article.cover_image ? (
-          <Image
+          <img
             src={article.cover_image}
             alt=""
-            fill
-            sizes="160px"
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            loading="lazy"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -99,13 +97,10 @@ function FeaturedCard({ article, basePath }: { article: BlogArticleSummary; base
     <article className="group relative overflow-hidden rounded-xl bg-white border border-gray-100 transition-all duration-200 hover:border-blue-200 hover:shadow-sm">
       <div className="relative aspect-[2.2/1] overflow-hidden bg-gradient-to-br from-blue-50 to-slate-100">
         {article.cover_image ? (
-          <Image
+          <img
             src={article.cover_image}
             alt=""
-            fill
-            sizes="(max-width: 768px) 100vw, 66vw"
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
-            priority
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -214,7 +209,7 @@ function Sidebar({
                 <Link href={`${basePath}/${encodeURIComponent(post.slug)}`} className="group flex gap-3">
                   <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-50">
                     {post.cover_image ? (
-                      <Image src={post.cover_image} alt="" fill sizes="48px" className="object-cover" />
+                      <img src={post.cover_image} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center">
                         <svg className="h-3.5 w-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -239,13 +238,10 @@ export default async function ArticlePage({
             {/* Cover Image */}
             {article.cover_image && (
               <div className="relative mb-10 aspect-[2/1] overflow-hidden rounded-xl">
-                <Image
+                <img
                   src={article.cover_image}
                   alt={article.title}
-                  fill
-                  sizes="(max-width: 768px) 100vw, 66vw"
-                  className="object-cover"
-                  priority
+                  className="absolute inset-0 h-full w-full object-cover"
                 />
               </div>
             )}
@@ -284,7 +280,7 @@ export default async function ArticlePage({
                     >
                       <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-50">
                         {r.cover_image ? (
-                          <Image src={r.cover_image} alt="" fill sizes="64px" className="object-cover" />
+                          <img src={r.cover_image} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center">
                             <svg className="h-4 w-4 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -333,7 +329,7 @@ export default async function ArticlePage({
                         <Link href={`${basePath}/${encodeURIComponent(rp.slug)}`} className="group flex gap-3">
                           <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-50">
                             {rp.cover_image ? (
-                              <Image src={rp.cover_image} alt="" fill sizes="48px" className="object-cover" />
+                              <img src={rp.cover_image} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
                             ) : (
                               <div className="flex h-full w-full items-center justify-center">
                                 <svg className="h-3.5 w-3.5 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
