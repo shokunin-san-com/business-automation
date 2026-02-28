@@ -152,7 +152,7 @@ def _assign_cover_images(business_id: str, media_id: str) -> int:
                     key, _, val = line.partition("=")
                     os.environ.setdefault(key.strip(), val.strip())
 
-        url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+        url = os.environ.get("SUPABASE_URL", "") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         if not url or not key:
             logger.warning("Supabase credentials not available for cover image assignment")
