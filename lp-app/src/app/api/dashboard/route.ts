@@ -8,7 +8,7 @@ const ALL_SCHEDULERS = Object.values(JOB_MAP).flatMap((j) => j.schedulers);
 // ---------------------------------------------------------------------------
 // In-memory cache to avoid hitting Google Sheets quota (60 reads/min/user)
 // ---------------------------------------------------------------------------
-const CACHE_TTL_MS = 15_000; // 15 seconds
+const CACHE_TTL_MS = 120_000; // 2 minutes (was 15s — too aggressive for 15+ sheet reads)
 
 interface CacheEntry {
   data: unknown;
@@ -17,13 +17,32 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+/** Retry with exponential backoff for Sheets API quota errors. */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = String(err);
+      const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+      if (isQuotaError && attempt < retries) {
+        const delay = Math.min(2000 * Math.pow(2, attempt), 15000); // 2s, 4s, 8s
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("withRetry: exhausted retries");
+}
+
 async function cachedGetAllRows(sheetName: string): Promise<Record<string, string>[]> {
   const now = Date.now();
   const entry = cache.get(`rows:${sheetName}`);
   if (entry && now - entry.fetchedAt < CACHE_TTL_MS) {
     return entry.data as Record<string, string>[];
   }
-  const rows = await getAllRows(sheetName);
+  const rows = await withRetry(() => getAllRows(sheetName));
   cache.set(`rows:${sheetName}`, { data: rows, fetchedAt: now });
   return rows;
 }
@@ -34,7 +53,7 @@ async function cachedCountRows(sheetName: string): Promise<number> {
   if (entry && now - entry.fetchedAt < CACHE_TTL_MS) {
     return entry.data as number;
   }
-  const count = await countRows(sheetName);
+  const count = await withRetry(() => countRows(sheetName));
   cache.set(`count:${sheetName}`, { data: count, fetchedAt: now });
   return count;
 }
