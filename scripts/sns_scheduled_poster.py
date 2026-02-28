@@ -29,6 +29,7 @@ MAX_POSTS_PER_RUN = 2         # Max total posts per execution (1 twitter + 1 lin
 POST_INTERVAL_SEC = 30        # Seconds between posts (rate limit safety)
 DAILY_TWITTER_LIMIT = 2       # X(Twitter): 2 posts/day (run 2x/day)
 DAILY_LINKEDIN_LIMIT = 2      # LinkedIn: 2 posts/day (run 2x/day)
+MAX_RETRY_COUNT = 3           # Max retries for failed posts before permanent skip
 
 
 def _count_today_posted(all_rows: list[dict], platform: str) -> int:
@@ -53,17 +54,24 @@ def _get_queued_posts() -> list[dict]:
 
 
 def _post_to_platform(text: str, platform: str) -> tuple[str, str]:
-    """Post text to platform. Returns (status, url)."""
+    """Post text to platform. Returns (status, detail).
+
+    Status can be: "posted", "failed", "duplicate", "limit_reached"
+    """
     try:
         if platform == "twitter":
             result = post_tweet(text)
         elif platform == "linkedin":
             result = post_linkedin(text)
         else:
-            return "failed", ""
+            return "failed", "unknown_platform"
 
         if result is None:
-            return "failed", ""
+            return "failed", "API returned None"
+
+        # twitter_client now returns error dicts for known issues
+        if "error" in result:
+            return result["error"], result.get("detail", "")
 
         url = result.get("url", "") or result.get("id", "")
         return "posted", url
@@ -80,15 +88,24 @@ def main():
         # Single API call to get all rows (reused for daily count + queued filtering)
         all_rows = get_all_rows("sns_queue")
 
+        # Include both "queued" and retryable "failed" posts
         queued = [r for r in all_rows if r.get("status") == "queued"]
+        retryable = [
+            r for r in all_rows
+            if r.get("status") == "failed"
+            and int(r.get("retry_count", "0") or "0") < MAX_RETRY_COUNT
+            and r.get("error_detail", "") not in ("duplicate", "limit_reached", "unauthorized")
+        ]
         queued.sort(key=lambda r: r.get("queue_id", ""))
+        # Prioritize new queued posts, then retries
+        candidates = queued + retryable
 
-        if not queued:
-            logger.info("No queued posts. Exiting.")
+        if not candidates:
+            logger.info("No queued or retryable posts. Exiting.")
             update_status("sns_scheduled_poster", "success", "キュー空")
             return
 
-        logger.info(f"Found {len(queued)} queued posts")
+        logger.info(f"Found {len(queued)} queued + {len(retryable)} retryable posts")
 
         # Check daily limits (already posted today)
         twitter_today = _count_today_posted(all_rows, "twitter")
@@ -109,13 +126,14 @@ def main():
         total_failed = 0
         total_skipped = 0
 
-        for post in queued:
+        for post in candidates:
             if total_posted + total_failed + total_skipped >= MAX_POSTS_PER_RUN:
                 break
 
             platform = post.get("platform", "twitter")
             queue_id = post.get("queue_id", "")
             text = post.get("post_text", "")
+            retry_count = int(post.get("retry_count", "0") or "0")
 
             # Enforce per-execution platform limits (1 post per platform per run)
             if platform == "twitter" and twitter_count >= MAX_TWITTER_PER_RUN:
@@ -165,6 +183,7 @@ def main():
                     "status": status,
                     "posted_at": now,
                     "post_url": url_or_error,
+                    "retry_count": str(retry_count),
                 })
                 total_posted += 1
                 if platform == "twitter":
@@ -172,20 +191,48 @@ def main():
                 else:
                     linkedin_count += 1
                 logger.info(f"  → Posted: {url_or_error}")
-            else:
+            elif status == "duplicate":
+                # Permanent skip — duplicate content cannot be retried
                 batch_update_by_key("sns_queue", "queue_id", queue_id, {
-                    "status": status,
+                    "status": "skipped",
+                    "error_detail": f"duplicate: {url_or_error}",
+                })
+                total_skipped += 1
+                logger.warning(f"  → Duplicate: {queue_id}")
+            elif status == "limit_reached":
+                # Stop trying this platform for today
+                logger.warning(f"  → Platform limit reached for {platform}. Stopping.")
+                if platform == "twitter":
+                    twitter_count = twitter_remaining  # exhaust limit
+                else:
+                    linkedin_count = linkedin_remaining
+                # Re-queue for tomorrow
+                batch_update_by_key("sns_queue", "queue_id", queue_id, {
+                    "status": "queued",
+                    "error_detail": f"limit_reached (will retry tomorrow)",
+                })
+                total_skipped += 1
+            else:
+                # Retryable failure — increment retry_count
+                new_retry = retry_count + 1
+                final_status = "failed" if new_retry < MAX_RETRY_COUNT else "skipped"
+                batch_update_by_key("sns_queue", "queue_id", queue_id, {
+                    "status": final_status,
                     "posted_at": now,
                     "error_detail": url_or_error,
+                    "retry_count": str(new_retry),
                 })
                 total_failed += 1
-                logger.error(f"  → Failed: {url_or_error}")
+                if final_status == "skipped":
+                    logger.error(f"  → Permanently failed after {MAX_RETRY_COUNT} retries: {url_or_error}")
+                else:
+                    logger.warning(f"  → Failed (retry {new_retry}/{MAX_RETRY_COUNT}): {url_or_error}")
 
             # Rate limit safety
             time.sleep(POST_INTERVAL_SEC)
 
         # Summary
-        remaining = len(queued) - total_posted - total_failed - total_skipped
+        remaining = len(candidates) - total_posted - total_failed - total_skipped
         summary = f"投稿{total_posted}件 / 失敗{total_failed}件 / スキップ{total_skipped}件 / 残{remaining}件"
 
         if total_posted > 0:

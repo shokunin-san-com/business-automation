@@ -38,6 +38,7 @@ from utils.sheets_client import (
     update_cell,
 )
 from utils.scraper import scrape_companies
+from utils.target_collector import collect_and_register as collect_targets
 from utils.form_submitter import submit_form
 from utils.slack_notifier import send_message as slack_notify
 from utils.status_writer import update_status
@@ -229,25 +230,19 @@ async def process_targets(
 
 
 def _check_distribution_guard() -> tuple[bool, str]:
-    """V2 distribution guard: check lp_ready_log READY + interview_log >= 5."""
+    """V2 distribution guard: check lp_ready_log has READY markets.
+
+    Interview requirement removed per CEO directive (2026-02-28):
+    Focus on completing one market end-to-end first.
+    """
     try:
         lp_ready = get_all_rows("lp_ready_log")
         active_ready = [r for r in lp_ready if r.get("status") == "READY"]
         if not active_ready:
             return False, "lp_ready_logにREADYレコードなし"
-
-        latest_run_id = active_ready[-1].get("run_id", "")
-        if latest_run_id:
-            interviews = get_all_rows("interview_log")
-            interview_count = len([
-                i for i in interviews
-                if i.get("run_id") == latest_run_id
-            ])
-            if interview_count < 5:
-                return False, f"ヒアリング{interview_count}/5件"
     except Exception as e:
         logger.warning(f"Distribution guard check error: {e}")
-        return True, ""  # Don't block on guard infrastructure failure
+        return True, ""
 
     return True, ""
 
@@ -274,10 +269,15 @@ def main():
             update_status("3_form_sales", "success", "対象なし", {"submitted": 0})
             return
 
-        # Step 1: Scrape new companies for each idea
-        update_status("3_form_sales", "running", "企業スクレイピング中...")
+        # Step 1: Collect target companies using enhanced collector
+        update_status("3_form_sales", "running", "ターゲット企業収集中...")
         for idea in active_ideas:
-            scrape_and_register(idea, max_per_idea=daily_limit)
+            collect_targets(
+                business_id=idea["id"],
+                market_name=idea["name"],
+                payer=idea.get("payer", ""),
+                target_count=daily_limit,
+            )
 
         # Load learning context for sales messages
         learning_context = get_learning_context(categories=["form_sales"])
