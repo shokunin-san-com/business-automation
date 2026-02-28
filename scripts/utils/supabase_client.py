@@ -96,12 +96,12 @@ def ensure_business(business_id: str) -> dict[str, Any] | None:
     """
     client = get_client()
 
-    # Check if already exists
+    # Check if already exists (use maybe_single to avoid PGRST116 on 0 rows)
     result = (
         client.table("businesses")
         .select("*")
         .eq("business_id", business_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     if result.data:
