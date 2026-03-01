@@ -269,46 +269,65 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // --- Rebuild pipeline Docker image via Cloud Build ---
+    // --- Rebuild pipeline Docker image via Cloud Build trigger ---
     if (action === "rebuild_pipeline") {
       try {
         const token = await getAccessToken();
-        const IMAGE = "asia-northeast1-docker.pkg.dev/marketprobe-automation/pipeline/scripts:latest";
-        const url = `https://cloudbuild.googleapis.com/v1/projects/${GCP_PROJECT}/builds`;
-        const buildRes = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            source: {
-              repoSource: {
-                projectId: GCP_PROJECT,
-                repoName: "business-automation",
-                branchName: "main",
-              },
-            },
-            steps: [
-              {
-                name: "gcr.io/cloud-builders/docker",
-                args: ["build", "-t", IMAGE, "-f", "Dockerfile", "."],
-              },
-            ],
-            images: [IMAGE],
-          }),
-        });
-        if (!buildRes.ok) {
-          const errText = await buildRes.text();
-          report.rebuild_pipeline = { error: `${buildRes.status}: ${errText}` };
+        // First, list existing triggers
+        const triggersUrl = `https://cloudbuild.googleapis.com/v1/projects/${GCP_PROJECT}/triggers`;
+        const triggersRes = await fetch(triggersUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!triggersRes.ok) {
+          report.rebuild_pipeline = { error: `list triggers: ${triggersRes.status}` };
         } else {
-          const buildData = await buildRes.json();
-          const meta = buildData.metadata?.build || {};
-          report.rebuild_pipeline = {
-            build_id: meta.id || buildData.name || "",
-            status: "QUEUED",
-            log_url: meta.logUrl || "",
-          };
+          const triggersData = await triggersRes.json();
+          const triggers = triggersData.triggers || [];
+          // Find a trigger for the pipeline
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const pipelineTrigger = triggers.find((t: any) =>
+            t.filename === "cloudbuild.yaml" ||
+            t.name?.includes("pipeline") ||
+            t.description?.includes("pipeline"),
+          );
+          if (pipelineTrigger) {
+            // Run the existing trigger
+            const runUrl = `https://cloudbuild.googleapis.com/v1/projects/${GCP_PROJECT}/triggers/${pipelineTrigger.id}:run`;
+            const runRes = await fetch(runUrl, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ branchName: "main" }),
+            });
+            if (!runRes.ok) {
+              const errText = await runRes.text();
+              report.rebuild_pipeline = { error: `trigger run: ${runRes.status}: ${errText.slice(0, 300)}`, trigger_id: pipelineTrigger.id, trigger_name: pipelineTrigger.name };
+            } else {
+              const buildData = await runRes.json();
+              const meta = buildData.metadata?.build || {};
+              report.rebuild_pipeline = { build_id: meta.id || buildData.name || "", status: "TRIGGERED", trigger: pipelineTrigger.name };
+            }
+          } else {
+            // No trigger found — try direct build as fallback
+            const IMAGE = "asia-northeast1-docker.pkg.dev/marketprobe-automation/pipeline/scripts:latest";
+            const buildUrl = `https://cloudbuild.googleapis.com/v1/projects/${GCP_PROJECT}/builds`;
+            const buildRes = await fetch(buildUrl, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                source: { repoSource: { projectId: GCP_PROJECT, repoName: "business-automation", branchName: "main" } },
+                steps: [{ name: "gcr.io/cloud-builders/docker", args: ["build", "-t", IMAGE, "-f", "Dockerfile", "."] }],
+                images: [IMAGE],
+              }),
+            });
+            if (!buildRes.ok) {
+              report.rebuild_pipeline = {
+                error: `direct build: ${buildRes.status}`,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                available_triggers: triggers.map((t: any) => ({ id: t.id, name: t.name, filename: t.filename })),
+              };
+            } else {
+              const bd = await buildRes.json();
+              report.rebuild_pipeline = { build_id: bd.metadata?.build?.id || "", status: "QUEUED" };
+            }
+          }
         }
       } catch (e) {
         report.rebuild_pipeline = { error: String(e) };
