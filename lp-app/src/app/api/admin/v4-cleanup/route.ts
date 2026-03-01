@@ -29,6 +29,74 @@ function containsProhibited(offer: Record<string, string>): string[] {
   return PROHIBITED_TERMS.filter((term) => text.includes(term));
 }
 
+/**
+ * GET /api/admin/v4-cleanup
+ *
+ * Pipeline diagnostics: budget check, settings, recent run summary
+ */
+export async function GET() {
+  try {
+    const [costRows, settingsRows, pipelineRows, snapshots] = await Promise.all([
+      getAllRows("api_costs").catch(() => []),
+      getAllRows("settings").catch(() => []),
+      getAllRows("pipeline_status").catch(() => []),
+      getAllRows("settings_snapshot").catch(() => []),
+    ]);
+
+    // Monthly cost calculation (current month)
+    const now = new Date();
+    const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    let monthlyCostJpy = 0;
+    for (const row of costRows) {
+      const ts = row.timestamp || "";
+      if (ts.startsWith(monthPrefix)) {
+        monthlyCostJpy += parseFloat(row.cost_jpy || "0") || 0;
+      }
+    }
+
+    // Budget settings
+    const settingsMap = new Map(settingsRows.map((r) => [r.key, r.value]));
+    const warnJpy = parseFloat(settingsMap.get("cost_warn_jpy") || "25000");
+    const hardStopJpy = parseFloat(settingsMap.get("cost_hard_stop_jpy") || "30000");
+
+    // Pipeline status
+    const orchestrateStatus = pipelineRows.find((r) => r.script_name === "orchestrate_v2");
+
+    // Recent runs (last 5)
+    const recentRuns = snapshots.slice(-5).reverse().map((s) => ({
+      run_id: s.run_id?.slice(0, 8),
+      timestamp: s.timestamp,
+    }));
+
+    return NextResponse.json({
+      budget: {
+        monthly_cost_jpy: Math.round(monthlyCostJpy),
+        warn_jpy: warnJpy,
+        hard_stop_jpy: hardStopJpy,
+        status: monthlyCostJpy >= hardStopJpy ? "HARD_STOP" : monthlyCostJpy >= warnJpy ? "WARNING" : "OK",
+        month: monthPrefix,
+        total_cost_rows: costRows.length,
+      },
+      pipeline: orchestrateStatus ? {
+        status: orchestrateStatus.status,
+        detail: orchestrateStatus.detail,
+        timestamp: orchestrateStatus.timestamp,
+        metrics_json: orchestrateStatus.metrics_json,
+      } : null,
+      recent_runs: recentRuns,
+      key_settings: {
+        ceo_profile_json: settingsMap.get("ceo_profile_json")?.slice(0, 100) || "(not set)",
+        v2_continuous_mode: settingsMap.get("v2_continuous_mode") || "(not set)",
+        v2_continuous_count: settingsMap.get("v2_continuous_count") || "(not set)",
+        max_sv_combos: settingsMap.get("max_sv_combos") || "(not set)",
+        max_competitor_combos: settingsMap.get("max_competitor_combos") || "(not set)",
+      },
+    });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
