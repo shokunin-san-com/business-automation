@@ -9,7 +9,7 @@ import { getAllRows, appendRows, batchUpdateColumn } from "@/lib/sheets";
  *   - unpublish_blogs: Set all blog articles to "unpublished"
  *   - all: Both operations
  *
- * Body: { action: "reject_offers" | "unpublish_blogs" | "all" }
+ * Body: { action: "reject_offers" | "reject_all_offers" | "unpublish_blogs" | "all" }
  */
 
 const PROHIBITED_TERMS = [
@@ -77,6 +77,50 @@ export async function POST(request: NextRequest) {
       }
 
       report.reject_offers = {
+        total_offers: offerRows.length,
+        already_rejected: alreadyRejected.size,
+        newly_rejected: toReject.length,
+        details,
+      };
+    }
+
+    // --- Reject ALL remaining offers (regardless of prohibited terms) ---
+    if (action === "reject_all_offers") {
+      const offerRows = await getAllRows("offer_3_log");
+      const ceoLog = await getAllRows("ceo_reject_log");
+
+      const alreadyRejected = new Set(
+        ceoLog
+          .filter((r) => r.type === "offer")
+          .map((r) => `${r.run_id}:${r.rejected_item}`),
+      );
+
+      const toReject: string[][] = [];
+      const details: { run_id: string; offer_name: string }[] = [];
+
+      for (const offer of offerRows) {
+        const rid = offer.run_id || "";
+        const name = offer.offer_name || "";
+        const key = `${rid}:${name}`;
+
+        if (alreadyRejected.has(key)) continue;
+
+        toReject.push([
+          rid,
+          "offer",
+          name,
+          "v4全却下: 旧オファー一括reject",
+          "SYSTEM",
+          now,
+        ]);
+        details.push({ run_id: rid, offer_name: name });
+      }
+
+      if (toReject.length > 0) {
+        await appendRows("ceo_reject_log", toReject);
+      }
+
+      report.reject_all_offers = {
         total_offers: offerRows.length,
         already_rejected: alreadyRejected.size,
         newly_rejected: toReject.length,
