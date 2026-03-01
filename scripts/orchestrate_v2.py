@@ -879,8 +879,10 @@ def main():
             count = s.get("count", 0)
             if "Layer1" in name:
                 v2_metrics["types_generated"] = count
+                v2_metrics["layer1_types_generated"] = count
             elif "Layer2" in name:
                 v2_metrics["combos_generated"] = count
+                v2_metrics["layer2_combos_generated"] = count
             elif "需要検証" in name:
                 v2_metrics["demand_verified"] = count
             elif "競合" in name:
