@@ -109,6 +109,55 @@ export async function GET() {
           return { error: String(e) };
         }
       })(),
+      // Cloud Run Job recent executions
+      recent_executions: await (async () => {
+        try {
+          const token = await getAccessToken();
+          const execUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2/executions?pageSize=3`;
+          const res = await fetch(execUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) return { error: `${res.status} ${res.statusText}` };
+          const data = await res.json();
+          return (data.executions || []).map((ex: Record<string, unknown>) => ({
+            name: (ex.name as string || "").split("/").pop(),
+            status: (ex as Record<string, Record<string, unknown>>).conditions?.[0]?.type || "",
+            reason: (ex as Record<string, Record<string, unknown>>).conditions?.[0]?.reason || "",
+            message: ((ex as Record<string, Record<string, unknown>>).conditions?.[0]?.message as string || "").slice(0, 200),
+            createTime: ex.createTime || "",
+            completionTime: ex.completionTime || "",
+            failedCount: ex.failedCount || 0,
+            succeededCount: ex.succeededCount || 0,
+          }));
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })(),
+      // Cloud Logging: last error logs from orchestrate-v2
+      recent_logs: await (async () => {
+        try {
+          const token = await getAccessToken();
+          const filter = `resource.type="cloud_run_job" AND resource.labels.job_name="orchestrate-v2" AND severity>=ERROR AND timestamp>="${new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()}"`;
+          const logUrl = `https://logging.googleapis.com/v2/entries:list`;
+          const res = await fetch(logUrl, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              resourceNames: [`projects/${GCP_PROJECT}`],
+              filter,
+              orderBy: "timestamp desc",
+              pageSize: 10,
+            }),
+          });
+          if (!res.ok) return { error: `${res.status}: ${(await res.text()).slice(0, 200)}` };
+          const data = await res.json();
+          return (data.entries || []).map((e: Record<string, unknown>) => ({
+            timestamp: e.timestamp || "",
+            severity: e.severity || "",
+            message: ((e.textPayload || (e.jsonPayload as Record<string, unknown>)?.message || "") as string).slice(0, 300),
+          }));
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })(),
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
