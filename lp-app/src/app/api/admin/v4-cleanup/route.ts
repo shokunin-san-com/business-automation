@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllRows, appendRows, batchUpdateColumn } from "@/lib/sheets";
+import { getAccessToken, GCP_PROJECT, GCP_REGION } from "@/lib/gcp-auth";
 
 /**
  * POST /api/admin/v4-cleanup
@@ -91,6 +92,23 @@ export async function GET() {
         max_sv_combos: settingsMap.get("max_sv_combos") || "(not set)",
         max_competitor_combos: settingsMap.get("max_competitor_combos") || "(not set)",
       },
+      cloud_run_job: await (async () => {
+        try {
+          const token = await getAccessToken();
+          const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2`;
+          const res = await fetch(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) return { error: `${res.status} ${res.statusText}` };
+          const job = await res.json();
+          const container = job.template?.template?.containers?.[0] || {};
+          return {
+            image: container.image || "(unknown)",
+            last_updated: job.updateTime || "",
+            execution_count: job.executionCount || 0,
+          };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      })(),
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -194,6 +212,45 @@ export async function POST(request: NextRequest) {
         newly_rejected: toReject.length,
         details,
       };
+    }
+
+    // --- Rebuild pipeline Docker image via Cloud Build ---
+    if (action === "rebuild_pipeline") {
+      try {
+        const token = await getAccessToken();
+        const url = `https://cloudbuild.googleapis.com/v1/projects/${GCP_PROJECT}/builds`;
+        const buildRes = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source: {
+              repoSource: {
+                projectId: GCP_PROJECT,
+                repoName: "business-automation",
+                branchName: "main",
+              },
+            },
+            filename: "cloudbuild.yaml",
+          }),
+        });
+        if (!buildRes.ok) {
+          const errText = await buildRes.text();
+          report.rebuild_pipeline = { error: `${buildRes.status}: ${errText}` };
+        } else {
+          const buildData = await buildRes.json();
+          const meta = buildData.metadata?.build || {};
+          report.rebuild_pipeline = {
+            build_id: meta.id || buildData.name || "",
+            status: "QUEUED",
+            log_url: meta.logUrl || "",
+          };
+        }
+      } catch (e) {
+        report.rebuild_pipeline = { error: String(e) };
+      }
     }
 
     // --- Task 4: Unpublish all blog articles ---
