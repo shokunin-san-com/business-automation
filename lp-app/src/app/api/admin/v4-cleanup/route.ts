@@ -315,6 +315,81 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // --- Trigger Cloud Run Job execution ---
+    if (action === "run_pipeline") {
+      try {
+        const token = await getAccessToken();
+        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2:run`;
+        const runRes = await fetch(jobUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (!runRes.ok) {
+          const errText = await runRes.text();
+          report.run_pipeline = { error: `${runRes.status}: ${errText.slice(0, 300)}` };
+        } else {
+          const runData = await runRes.json();
+          report.run_pipeline = {
+            execution: runData.metadata?.name || runData.name || "",
+            status: "TRIGGERED",
+          };
+        }
+      } catch (e) {
+        report.run_pipeline = { error: String(e) };
+      }
+    }
+
+    // --- Test Gemini API directly ---
+    if (action === "test_gemini") {
+      try {
+        // Read GEMINI_API_KEY from Cloud Run Job env vars
+        const token = await getAccessToken();
+        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2`;
+        const jobRes = await fetch(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!jobRes.ok) {
+          report.test_gemini = { error: `Can't read job: ${jobRes.status}` };
+        } else {
+          const job = await jobRes.json();
+          const envVars = job.template?.template?.containers?.[0]?.env || [];
+          const apiKeyEntry = envVars.find((e: { name: string }) => e.name === "GEMINI_API_KEY");
+          const modelEntry = envVars.find((e: { name: string }) => e.name === "GEMINI_MODEL");
+
+          if (!apiKeyEntry?.value) {
+            report.test_gemini = { error: "GEMINI_API_KEY not found in Cloud Run Job env", env_names: envVars.map((e: { name: string }) => e.name) };
+          } else {
+            const model = modelEntry?.value || "gemini-2.5-flash";
+            // Call Gemini API with a simple test prompt
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKeyEntry.value}`;
+            const testRes = await fetch(geminiUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: "JSONで回答してください: {\"test\": true, \"model\": \"あなたのモデル名\"}" }] }],
+                generationConfig: { responseMimeType: "application/json", maxOutputTokens: 256, temperature: 0.1 },
+              }),
+            });
+            if (!testRes.ok) {
+              const errText = await testRes.text();
+              report.test_gemini = { error: `Gemini API ${testRes.status}: ${errText.slice(0, 500)}`, model };
+            } else {
+              const geminiData = await testRes.json();
+              const candidate = geminiData.candidates?.[0];
+              report.test_gemini = {
+                model,
+                status: "OK",
+                response_text: candidate?.content?.parts?.[0]?.text?.slice(0, 200) || "(empty)",
+                finish_reason: candidate?.finishReason || "",
+                safety_ratings: geminiData.candidates?.[0]?.safetyRatings?.map((r: { category: string; probability: string }) => `${r.category}:${r.probability}`) || [],
+              };
+            }
+          }
+        }
+      } catch (e) {
+        report.test_gemini = { error: String(e) };
+      }
+    }
+
     // --- Task 4: Unpublish all blog articles ---
     if (action === "unpublish_blogs" || action === "all") {
       const count = await batchUpdateColumn(
