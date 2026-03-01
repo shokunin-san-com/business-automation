@@ -45,7 +45,7 @@ export default function DashboardPage() {
   const allPaused = enabledSchedulers === 0;
 
   return (
-    <AppShell lpCount={data.lpCount}>
+    <AppShell>
       {/* Top Bar */}
       <header className="sticky top-0 z-30 hidden lg:flex h-14 items-center justify-between border-b border-white/[.06] bg-[#0a0a0f]/80 px-6 backdrop-blur-xl">
         <div className="flex items-center gap-3">

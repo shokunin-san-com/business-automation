@@ -24,8 +24,15 @@ export interface SchedulerInfo {
   nextRun: string;
 }
 
+export interface V2Step {
+  name: string;
+  status: "done" | "running" | "error" | "waiting";
+  count: number;
+}
+
 export interface V2Data {
   latestRunId: string;
+  steps: V2Step[];
   gateResults: Record<string, string>[];
   offers: Record<string, string>[];
   scoringWarnings: string[];

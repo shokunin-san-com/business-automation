@@ -57,8 +57,8 @@ export async function GET() {
       ).length;
 
       // Determine status
-      let status = "pending_approval";
       const ceoDecision = ceoDecisions.get(rid);
+      let status: string;
       if (rejectedOffers.has(`${rid}:${o.offer_name}`)) {
         status = "rejected";
       } else if (ceoDecision === "STOP") {
@@ -67,6 +67,8 @@ export async function GET() {
         status = "active";
       } else if (readyRunIds.has(rid)) {
         status = "pending_approval";
+      } else {
+        status = "draft";
       }
 
       // Determine rank based on activity
@@ -81,6 +83,11 @@ export async function GET() {
         const gateDate = new Date(gate.timestamp);
         const now = new Date();
         elapsedDays = Math.floor((now.getTime() - gateDate.getTime()) / (1000 * 60 * 60 * 24));
+      }
+
+      // D-rank auto-stop: rank D + 7 days elapsed → auto-stop
+      if (rank === "D" && elapsedDays >= 7 && (status === "active" || status === "pending_approval")) {
+        status = "stopped";
       }
 
       return {

@@ -315,6 +315,38 @@ export async function GET(request: NextRequest) {
       fetchErrors.push({ section: "v2", message: String(err) });
     }
 
+    // Build V3 pipeline steps from actual data
+    const gatePass = gateResults.filter((r) => r.status === "PASS").length;
+    const gateFail = gateResults.filter((r) => r.status === "FAIL").length;
+    const v2Steps: { name: string; status: "done" | "running" | "error" | "waiting"; count: number }[] = [
+      {
+        name: "Phase D (競合分析)",
+        status: gateResults.length > 0
+          ? (gateFail > 0 && gatePass === 0 ? "error" : "done")
+          : "waiting",
+        count: gatePass,
+      },
+      {
+        name: "Phase E (オファー生成)",
+        status: offers.length > 0 ? "done" : "waiting",
+        count: offers.length,
+      },
+      {
+        name: "Phase F (LP生成)",
+        status: lpReadyStatus === "READY"
+          ? "done"
+          : lpReadyStatus === "BLOCKED" ? "error" : "waiting",
+        count: lpReadyStatus === "READY" ? 1 : 0,
+      },
+      {
+        name: "Phase G (承認)",
+        status: ceoReviewNeeded.market || ceoReviewNeeded.offer
+          ? "running"
+          : lpReadyStatus === "READY" ? "done" : "waiting",
+        count: ceoReviewNeeded.market || ceoReviewNeeded.offer ? 0 : 1,
+      },
+    ];
+
     // --- Downstream metrics: inquiry + deal pipeline ---
     const downstream = {
       totalInquiries: 0,
@@ -512,6 +544,7 @@ export async function GET(request: NextRequest) {
       schedulerStatus,
       v2: {
         latestRunId,
+        steps: v2Steps,
         gateResults,
         offers,
         scoringWarnings,
@@ -536,6 +569,7 @@ export async function GET(request: NextRequest) {
       schedulerStatus: {},
       v2: {
         latestRunId: "",
+        steps: [],
         gateResults: [],
         offers: [],
         scoringWarnings: [],

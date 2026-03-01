@@ -9,22 +9,11 @@ interface Props {
   onApprove: (ideaId: string, action: "approve" | "reject") => Promise<void>;
 }
 
-const V3_STEPS = [
-  { key: "layer1", label: "Layer 1" },
-  { key: "layer2", label: "Layer 2" },
-  { key: "phaseC", label: "Phase C" },
-  { key: "phaseD", label: "Phase D" },
-  { key: "phaseE", label: "Phase E" },
-  { key: "phaseF", label: "LP\u751F\u6210" },
-  { key: "phaseG", label: "\u30BF\u30FC\u30B2\u30C3\u30C8" },
-  { key: "approval", label: "\u627F\u8A8D" },
-] as const;
-
 function StepBadge({ status }: { status: string }) {
-  if (status === "done") return <span className="h-2 w-2 rounded-full bg-emerald-500" />;
-  if (status === "running") return <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />;
-  if (status === "error") return <span className="h-2 w-2 rounded-full bg-red-500" />;
-  return <span className="h-2 w-2 rounded-full bg-white/20" />;
+  if (status === "done") return <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />;
+  if (status === "running") return <span className="h-2.5 w-2.5 rounded-full bg-blue-500 animate-pulse" />;
+  if (status === "error") return <span className="h-2.5 w-2.5 rounded-full bg-red-500" />;
+  return <span className="h-2.5 w-2.5 rounded-full bg-white/20" />;
 }
 
 export function V2CommandCenter({ v2, pendingIdeas, approving, onApprove }: Props) {
@@ -109,31 +98,27 @@ export function V2CommandCenter({ v2, pendingIdeas, approving, onApprove }: Prop
               </div>
 
               {/* Pipeline Step Progress */}
-              <div className="mb-4 flex items-center gap-1">
-                {V3_STEPS.map((step, i) => {
-                  const gateForStep = v2.gateResults.find(
-                    (g) => g.phase === step.key,
-                  );
-                  const status = gateForStep
-                    ? gateForStep.status === "PASS" ? "done" : "error"
-                    : i === 0 && v2.gateResults.length === 0 ? "waiting" : "waiting";
-                  return (
-                    <div key={step.key} className="flex items-center gap-1">
+              {v2.steps.length > 0 && (
+                <div className="mb-4 flex items-center gap-1">
+                  {v2.steps.map((step, i) => (
+                    <div key={step.name} className="flex items-center gap-1">
                       <div className="flex flex-col items-center gap-1">
-                        <StepBadge status={status} />
-                        <span className="text-[8px] text-white/30">{step.label}</span>
+                        <StepBadge status={step.status} />
+                        <span className="text-[8px] text-white/30 text-center whitespace-nowrap">
+                          {step.name.replace(/Phase \w \(/, "(").replace(/\)/, "")}
+                        </span>
                       </div>
-                      {i < V3_STEPS.length - 1 && (
-                        <div className={`h-px w-4 ${status === "done" ? "bg-emerald-500/50" : "bg-white/10"}`} />
+                      {i < v2.steps.length - 1 && (
+                        <div className={`h-px w-4 ${step.status === "done" ? "bg-emerald-500/50" : "bg-white/10"}`} />
                       )}
                     </div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
 
               {/* Gate Results */}
               <div className="mb-3">
-                <p className="text-xs text-white/50 mb-1">{"\u30B2\u30FC\u30C8\u7D50\u679C"}</p>
+                <p className="text-xs text-white/50 mb-1">ゲート結果</p>
                 <div className="flex flex-wrap gap-2">
                   {v2.gateResults.map((g, i) => (
                     <span
@@ -148,7 +133,7 @@ export function V2CommandCenter({ v2, pendingIdeas, approving, onApprove }: Prop
                     </span>
                   ))}
                   {v2.gateResults.length === 0 && (
-                    <span className="text-[11px] text-white/30">{"\u307E\u3060\u5B9F\u884C\u3055\u308C\u3066\u3044\u307E\u305B\u3093"}</span>
+                    <span className="text-[11px] text-white/30">まだ実行されていません</span>
                   )}
                 </div>
               </div>

@@ -116,12 +116,25 @@ export default function ExplorePage() {
               {isExpanded && run.steps && (
                 <div className="mt-4 space-y-2 border-t border-white/[.06] pt-4">
                   {run.steps.map((step, i) => (
-                    <div key={i} className="flex items-center gap-3 text-[11px]">
-                      <span>{STEP_STATUS_ICONS[step.status] || "\u2B55"}</span>
-                      <span className="text-white/70 font-medium w-40">{step.name}</span>
-                      <span className="text-white/40">{step.count > 0 ? `${step.count}件` : ""}</span>
+                    <div key={i}>
+                      <div className="flex items-center gap-3 text-[11px]">
+                        <span>{STEP_STATUS_ICONS[step.status] || "\u2B55"}</span>
+                        <span className="text-white/70 font-medium w-40">{step.name}</span>
+                        <span className="text-white/40">{step.count > 0 ? `${step.count}件` : ""}</span>
+                        {step.errors.length > 0 && (
+                          <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] text-red-400 border border-red-500/20">
+                            {step.errors.length}件エラー
+                          </span>
+                        )}
+                      </div>
                       {step.errors.length > 0 && (
-                        <span className="text-red-400 text-[10px] truncate max-w-xs">{step.errors[0]}</span>
+                        <div className="ml-8 mt-1 space-y-1">
+                          {step.errors.map((err, j) => (
+                            <p key={j} className="text-[10px] text-red-400/80 pl-2 border-l border-red-500/20">
+                              {err}
+                            </p>
+                          ))}
+                        </div>
                       )}
                     </div>
                   ))}

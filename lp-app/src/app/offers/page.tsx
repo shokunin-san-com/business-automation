@@ -27,6 +27,7 @@ const RANK_COLORS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   pending_approval: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  draft: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   stopped: "bg-white/5 text-white/40 border-white/10",
   rejected: "bg-red-500/10 text-red-400 border-red-500/20",
   archived: "bg-white/5 text-white/30 border-white/10",
@@ -35,6 +36,7 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   active: "稼働中",
   pending_approval: "承認待ち",
+  draft: "生成中",
   stopped: "停止中",
   rejected: "却下",
   archived: "アーカイブ",
@@ -66,9 +68,9 @@ export default function OffersPage() {
   const counts = {
     active: offers.filter((o) => o.status === "active").length,
     pending_approval: offers.filter((o) => o.status === "pending_approval").length,
+    draft: offers.filter((o) => o.status === "draft").length,
     stopped: offers.filter((o) => o.status === "stopped").length,
     rejected: offers.filter((o) => o.status === "rejected").length,
-    archived: offers.filter((o) => o.status === "archived").length,
   };
 
   return (

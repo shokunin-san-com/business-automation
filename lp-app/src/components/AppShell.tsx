@@ -7,8 +7,6 @@ import { useEffect } from "react";
 
 const NAV_ITEMS = [
   { icon: "grid", label: "Dashboard", href: "/dashboard" },
-  { icon: "zap", label: "Pipeline", href: "/dashboard?tab=pipeline" },
-  { icon: "file", label: "LPs", href: "/" },
   { icon: "book", label: "Offers", href: "/offers" },
   { icon: "bar", label: "Approval", href: "/approval" },
   { icon: "lightbulb", label: "Explore", href: "/explore" },
@@ -17,10 +15,8 @@ const NAV_ITEMS = [
 
 export default function AppShell({
   children,
-  lpCount,
 }: {
   children: React.ReactNode;
-  lpCount?: number;
 }) {
   const devSkipAuth = process.env.NEXT_PUBLIC_DEV_SKIP_AUTH === "true";
   const { data: session, status } = useSession();
@@ -82,9 +78,6 @@ export default function AppShell({
                     <NavIcon name={item.icon} />
                     <span className="text-xs">{item.label}</span>
                   </div>
-                  {item.label === "LPs" && lpCount !== undefined && (
-                    <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-medium">{lpCount}</span>
-                  )}
                 </div>
               </Link>
             );
