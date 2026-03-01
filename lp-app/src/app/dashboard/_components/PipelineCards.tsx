@@ -19,18 +19,12 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
 const PIPELINE_META: Record<string, { icon: string; schedule: string; schedulers: string[] }> = {
   orchestrate_v2: { icon: "\u{1F52C}", schedule: "", schedulers: [] },
   "1_lp_generator": { icon: "\u{1F680}", schedule: "毎日 09:00", schedulers: ["schedule-lp-generator"] },
-  "2_sns_poster": { icon: "\u{1F4E2}", schedule: "毎日 10:00 / 18:00", schedulers: ["schedule-sns-morning", "schedule-sns-evening"] },
-  "3_form_sales": { icon: "\u2709\uFE0F", schedule: "平日 11:00", schedulers: ["schedule-form-sales"] },
-  "4_analytics_reporter": { icon: "\u{1F4C8}", schedule: "毎日 01:00", schedulers: ["schedule-analytics"] },
   "5_slack_reporter": { icon: "\u{1F4AC}", schedule: "毎週月曜 08:00", schedulers: ["schedule-slack-report"] },
   "7_learning_engine": { icon: "\u{1F9E0}", schedule: "毎日 19:00", schedulers: ["schedule-learning-engine"] },
-  "9_expansion_engine": { icon: "\u{1F680}", schedule: "毎日 03:00", schedulers: ["schedule-expansion-engine"] },
+  blog_generator: { icon: "\u{1F4DD}", schedule: "毎日 06:00", schedulers: ["schedule-blog-generator"] },
 };
 
-const SCHEDULER_LABEL: Record<string, string> = {
-  "schedule-sns-morning": "朝",
-  "schedule-sns-evening": "夕",
-};
+const SCHEDULER_LABEL: Record<string, string> = {};
 
 const SCHEDULE_PRESETS = [
   { label: "毎日 6:00", cron: "0 6 * * *" },

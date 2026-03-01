@@ -98,14 +98,11 @@ export async function GET(request: NextRequest) {
     }
 
     const scriptLabels: Record<string, string> = {
-      orchestrate_v2: "V2パイプライン",
+      orchestrate_v2: "V3パイプライン",
       "1_lp_generator": "LP生成",
-      "2_sns_poster": "SNS投稿",
-      "3_form_sales": "フォーム営業",
-      "4_analytics_reporter": "分析・改善",
       "5_slack_reporter": "Slackレポート",
       "7_learning_engine": "学習エンジン",
-      "9_expansion_engine": "拡張エンジン",
+      blog_generator: "ブログ生成",
     };
 
     // Build a lookup from pipeline_status rows
@@ -401,6 +398,8 @@ export async function GET(request: NextRequest) {
         inquiryCount: number;
         dealWonCount: number;
         dealLostCount: number;
+        emailSentCount: number;
+        emailRepliedCount: number;
       };
     }
 
