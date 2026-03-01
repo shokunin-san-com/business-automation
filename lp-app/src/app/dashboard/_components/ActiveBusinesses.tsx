@@ -2,10 +2,11 @@
 
 import type { ActiveBusiness } from "../_types/dashboard";
 
-function formatTime(iso: string): string {
-  if (!iso) return "";
+function daysSince(iso: string): number {
+  if (!iso) return 0;
   const d = new Date(iso);
-  return d.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  return Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 interface Props {
@@ -18,7 +19,7 @@ export function ActiveBusinesses({ businesses }: Props) {
       <section className="rounded-2xl border border-white/[.06] bg-white/[.02] p-6 text-center">
         <p className="text-sm text-white/30">アクティブな事業案はありません</p>
         <p className="mt-1 text-[10px] text-white/20">
-          V2パイプラインを実行してゲート通過 → LP READY まで進めてください
+          V3パイプラインを実行して、オファー生成 → CEO承認まで進めてください
         </p>
       </section>
     );
@@ -28,32 +29,53 @@ export function ActiveBusinesses({ businesses }: Props) {
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-white/80">
-          アクティブ事業案 ({businesses.length})
+          稼働中オファー ({businesses.length})
         </h2>
       </div>
 
       {businesses.map((biz) => {
         const stats = biz.stats;
-        const totalActivity = stats.snsPostCount + stats.formSubmitCount + stats.blogArticleCount;
+        const rank = (biz as Record<string, unknown>).rank as string | undefined;
+        const emailSent = stats.emailSentCount ?? 0;
+        const emailReplied = stats.emailRepliedCount ?? 0;
+        const elapsed = daysSince(biz.gatePassedAt);
+
+        const rankColors: Record<string, string> = {
+          A: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+          B: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+          C: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+          D: "bg-red-500/15 text-red-400 border-red-500/30",
+        };
+        const rankStyle = rank
+          ? rankColors[rank] || "bg-white/5 text-white/30 border-white/10"
+          : "bg-white/5 text-white/30 border-white/10";
+
+        const hasActivity = emailSent > 0;
+
         return (
           <div
             key={biz.runId}
             className="rounded-2xl border border-white/[.08] bg-white/[.03] p-5"
           >
-            {/* ヘッダー: 市場名 + 支払者 */}
+            {/* Header */}
             <div className="flex items-start justify-between mb-4">
               <div>
                 <p className="text-sm font-semibold text-white/90">{biz.marketName}</p>
                 <p className="text-[11px] text-white/40 mt-0.5">
-                  支払者: {biz.payer || "未定義"} / ゲート通過: {formatTime(biz.gatePassedAt)}
+                  支払者: {biz.payer || "未定義"} / 稼働 {elapsed}日
                 </p>
               </div>
-              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
-                ACTIVE
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${rankStyle}`}>
+                  {rank || "未判定"}
+                </span>
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
+                  ACTIVE
+                </span>
+              </div>
             </div>
 
-            {/* オファー一覧 */}
+            {/* Offer List */}
             {biz.offers.length > 0 && (
               <div className="mb-4 space-y-1">
                 {biz.offers.map((o, i) => (
@@ -84,23 +106,35 @@ export function ActiveBusinesses({ businesses }: Props) {
               </div>
             )}
 
-            {/* 活動実績グリッド */}
-            <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
-              <StatCell label="LP" value={stats.lpCount} color="blue" />
-              <StatCell label="SNS投稿" value={stats.snsPostCount} color="cyan" />
-              <StatCell label="フォーム送信" value={stats.formSubmitCount} color="violet" />
-              <StatCell label="フォーム返信" value={stats.formResponseCount} color="purple" />
-              <StatCell label="ブログ" value={stats.blogArticleCount} color="pink" />
+            {/* V3 Activity Grid */}
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <StatCell label="メール送信" value={emailSent} color="cyan" />
+              <StatCell label="返信" value={emailReplied} color="violet" />
               <StatCell label="問い合わせ" value={stats.inquiryCount} color="amber" />
+              <StatCell label="ブログ" value={stats.blogArticleCount} color="pink" />
               <StatCell label="成約" value={stats.dealWonCount} color="emerald" />
               <StatCell label="失注" value={stats.dealLostCount} color="red" />
             </div>
 
-            {/* 活動ゼロ警告 */}
-            {totalActivity === 0 && (
+            {/* Status Messages */}
+            {!hasActivity && (
               <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
                 <p className="text-[10px] text-amber-400/80">
-                  まだ配信活動がありません。LP生成 → SNS/フォーム営業を実行してください。
+                  CEO承認待ちです。/approval で確認してください。
+                </p>
+              </div>
+            )}
+            {hasActivity && emailReplied === 0 && (
+              <div className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-2">
+                <p className="text-[10px] text-blue-400/80">
+                  メール営業中: {emailSent}通送信済み / 返信待ち
+                </p>
+              </div>
+            )}
+            {hasActivity && emailReplied > 0 && (
+              <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2">
+                <p className="text-[10px] text-emerald-400/80">
+                  メール営業中: {emailSent}通送信済み / 返信{emailReplied}件
                 </p>
               </div>
             )}

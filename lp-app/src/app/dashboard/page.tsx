@@ -6,8 +6,6 @@ import { useDashboardData } from "./_hooks/useDashboardData";
 import { KPICards } from "./_components/KPICards";
 import { ActiveBusinesses } from "./_components/ActiveBusinesses";
 import { V2CommandCenter } from "./_components/V2CommandCenter";
-import { DownstreamFunnel } from "./_components/DownstreamFunnel";
-import { ExpansionPatterns } from "./_components/ExpansionPatterns";
 import { PipelineCards, PIPELINE_META, formatTime, relativeTime } from "./_components/PipelineCards";
 import { LogsTab } from "./_components/LogsTab";
 import { KnowledgeTab } from "./_components/KnowledgeTab";
@@ -116,8 +114,6 @@ export default function DashboardPage() {
               onApprove={dashboard.handleApprove}
             />
             <ActiveBusinesses businesses={data.activeBusinesses} />
-            <DownstreamFunnel downstream={data.downstream} activeBusinesses={data.activeBusinesses} />
-            <ExpansionPatterns expansion={data.expansion} />
             <PipelineCards
               pipeline={data.pipeline}
               schedulerStatus={schedulerStatus}

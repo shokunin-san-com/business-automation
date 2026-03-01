@@ -276,7 +276,7 @@ export default async function BusinessBlogPage({
         </div>
         <div className="relative max-w-xl">
           <p className="text-[10px] tracking-[0.3em] text-white/40 uppercase font-mono">
-            Automate · Estimate · Grow
+            職人さんドットコム
           </p>
           <h1 className="mt-6 text-[26px] font-bold leading-[1.6] text-white sm:text-[32px] sm:leading-[1.55]">
             {business.display_name}

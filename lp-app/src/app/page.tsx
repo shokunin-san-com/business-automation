@@ -23,10 +23,10 @@ export default async function Home() {
             職人さんドットコム
           </p>
           <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
-            業界DXの最前線
+            建設業の現場と経営に役立つ情報
           </h1>
           <p className="mt-3 text-gray-500">
-            AI・自動化で変わる業界の最新ノウハウをお届けします。
+            安全管理・人材確保・業務効率化など、建設会社の経営に役立つノウハウをお届けします。
           </p>
         </div>
 
