@@ -205,6 +205,7 @@ def append_row(sheet_name: str, row: list[Any]) -> None:
 
 
 @_retry_on_rate_limit
+@_retry_on_rate_limit
 def append_rows(sheet_name: str, rows: list[list[Any]]) -> None:
     """Append multiple rows at once."""
     ws = get_worksheet(sheet_name)

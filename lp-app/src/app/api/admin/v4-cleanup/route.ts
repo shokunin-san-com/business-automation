@@ -493,7 +493,9 @@ export async function POST(request: NextRequest) {
           "cp -r /tmp/latest/scripts/* /app/scripts/",
           "cp -r /tmp/latest/templates/* /app/templates/",
           "[ -f /tmp/latest/run.py ] && cp /tmp/latest/run.py /app/run.py",
-          "echo '=== Code updated, starting pipeline ==='",
+          "echo '=== Code updated, running setup_sheets ==='",
+          "cd /app && python -c \"import sys; sys.path.insert(0,'scripts'); from setup_sheets import SHEETS; from utils.sheets_client import ensure_sheet_exists; [ensure_sheet_exists(n,h) for n,h in SHEETS.items()]; print(f'Ensured {len(SHEETS)} sheets exist')\"",
+          "echo '=== Sheets ready, starting pipeline ==='",
           "python run.py",
         ].join(" && ");
 
