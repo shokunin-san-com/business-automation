@@ -157,6 +157,60 @@ export async function updateCell(
 }
 
 /**
+ * Batch-update a column for all rows matching a predicate.
+ * Reads the sheet once, builds a batchUpdate, writes all in one API call.
+ */
+export async function batchUpdateColumn(
+  sheetName: string,
+  targetColumn: string,
+  newValue: string,
+  predicate: (row: Record<string, string>) => boolean,
+): Promise<number> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: sheetName,
+  });
+
+  const rows = res.data.values;
+  if (!rows || rows.length < 2) return 0;
+
+  const headers = rows[0];
+  const targetIdx = headers.indexOf(targetColumn);
+  if (targetIdx === -1) return 0;
+
+  const colLetter = String.fromCharCode(65 + targetIdx);
+
+  // Build row objects and find matches
+  const updates: { range: string; values: string[][] }[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, j) => { obj[h] = rows[i][j] || ""; });
+
+    if (predicate(obj)) {
+      updates.push({
+        range: `${sheetName}!${colLetter}${i + 1}`,
+        values: [[newValue]],
+      });
+    }
+  }
+
+  if (updates.length === 0) return 0;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "RAW",
+      data: updates,
+    },
+  });
+
+  return updates.length;
+}
+
+/**
  * Append rows to a sheet.
  */
 export async function appendRows(
