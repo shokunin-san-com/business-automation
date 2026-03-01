@@ -479,115 +479,51 @@ export async function POST(request: NextRequest) {
       } catch (e) { report.test_gemini_layer1 = { error: String(e) }; }
     }
 
-    // --- Deploy code hotfix: override Cloud Run Job command to git-pull latest code ---
+    // --- Deploy code hotfix: run pipeline with git-pull override ---
     if (action === "deploy_hotfix") {
       try {
         const token = await getAccessToken();
-        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2`;
+        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2:run`;
 
-        // 1. Read current job spec
-        const jobRes = await fetch(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
-        if (!jobRes.ok) {
-          report.deploy_hotfix = { error: `Read job: ${jobRes.status}` };
+        // Build git-pull + run command
+        const gitPullCmd = [
+          "echo '=== Hotfix: pulling latest code from GitHub ==='",
+          "apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 || true",
+          "git clone --depth 1 https://github.com/shokunin-san-com/business-automation.git /tmp/latest",
+          "cp -r /tmp/latest/scripts/* /app/scripts/",
+          "cp -r /tmp/latest/templates/* /app/templates/",
+          "[ -f /tmp/latest/run.py ] && cp /tmp/latest/run.py /app/run.py",
+          "echo '=== Code updated, starting pipeline ==='",
+          "python run.py",
+        ].join(" && ");
+
+        // Use execution-time container overrides (no PATCH needed)
+        const runRes = await fetch(jobUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            overrides: {
+              containerOverrides: [{
+                args: ["/bin/bash", "-c", gitPullCmd],
+              }],
+            },
+          }),
+        });
+
+        if (!runRes.ok) {
+          const errText = await runRes.text();
+          report.deploy_hotfix = { error: `Run with override: ${runRes.status}: ${errText.slice(0, 500)}` };
         } else {
-          const job = await jobRes.json();
-          const container = job.template?.template?.containers?.[0];
-          if (!container) {
-            report.deploy_hotfix = { error: "No container found in job spec" };
-          } else {
-            // 2. Build git-pull command prefix
-            const gitPullCmd = [
-              "echo '=== Hotfix: pulling latest code from GitHub ==='",
-              "apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 || true",
-              "git clone --depth 1 https://github.com/shokunin-san-com/business-automation.git /tmp/latest",
-              "cp -r /tmp/latest/scripts/* /app/scripts/",
-              "cp -r /tmp/latest/templates/* /app/templates/",
-              "[ -f /tmp/latest/run.py ] && cp /tmp/latest/run.py /app/run.py",
-              "echo '=== Code updated, starting pipeline ==='",
-              "python run.py",
-            ].join(" && ");
-
-            // 3. Build clean container spec (only writable fields)
-            const cleanContainer: Record<string, unknown> = {
-              image: container.image,
-              command: ["/bin/bash", "-c"],
-              args: [gitPullCmd],
-            };
-            // Preserve env vars and resources
-            if (container.env) cleanContainer.env = container.env;
-            if (container.resources) cleanContainer.resources = container.resources;
-
-            // 4. PATCH the job (full job body, no updateMask)
-            const patchRes = await fetch(jobUrl, {
-              method: "PATCH",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                template: {
-                  template: {
-                    containers: [cleanContainer],
-                    maxRetries: job.template?.template?.maxRetries,
-                    timeout: job.template?.template?.timeout,
-                    serviceAccount: job.template?.template?.serviceAccount,
-                  },
-                  taskCount: job.template?.taskCount,
-                },
-                launchStage: job.launchStage,
-              }),
-            });
-
-            if (!patchRes.ok) {
-              const errText = await patchRes.text();
-              report.deploy_hotfix = { error: `Patch job: ${patchRes.status}: ${errText.slice(0, 500)}` };
-            } else {
-              const patchData = await patchRes.json();
-              report.deploy_hotfix = {
-                status: "OK",
-                message: "Cloud Run Job updated — will git-pull latest code on next run",
-                updateTime: patchData.updateTime || "",
-                args_preview: gitPullCmd.slice(0, 200) + "...",
-              };
-            }
-          }
+          const runData = await runRes.json();
+          report.deploy_hotfix = {
+            status: "TRIGGERED",
+            message: "Pipeline triggered with git-pull override — will use latest code from GitHub",
+            execution: runData.metadata?.name || runData.name || "",
+            args_preview: gitPullCmd.slice(0, 200) + "...",
+          };
         }
       } catch (e) {
         report.deploy_hotfix = { error: String(e) };
-      }
-    }
-
-    // --- Revert hotfix: restore original CMD ---
-    if (action === "revert_hotfix") {
-      try {
-        const token = await getAccessToken();
-        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2`;
-        const jobRes = await fetch(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
-        if (!jobRes.ok) {
-          report.revert_hotfix = { error: `Read job: ${jobRes.status}` };
-        } else {
-          const job = await jobRes.json();
-          const container = job.template?.template?.containers?.[0];
-          if (!container) {
-            report.revert_hotfix = { error: "No container found" };
-          } else {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const restored = { ...container } as any;
-            delete restored.command;
-            restored.args = undefined;
-            const patchRes = await fetch(`${jobUrl}?updateMask=template.template.containers`, {
-              method: "PATCH",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                template: { template: { containers: [{ ...container, command: [], args: ["python", "run.py"] }] } },
-              }),
-            });
-            if (!patchRes.ok) {
-              report.revert_hotfix = { error: `Patch: ${patchRes.status}: ${(await patchRes.text()).slice(0, 500)}` };
-            } else {
-              report.revert_hotfix = { status: "OK", message: "Restored original CMD: python run.py" };
-            }
-          }
-        }
-      } catch (e) {
-        report.revert_hotfix = { error: String(e) };
       }
     }
 
