@@ -261,7 +261,14 @@ def _self_review_types(types: list[dict], ceo_constraints: dict) -> list[dict]:
 
 
 def _ai_merge_types(raw_types: list[dict]) -> list[dict]:
+    BATCH_SIZE = 80
+
     template = jinja_env.get_template("layer1_merge_prompt.j2")
+    system_msg = (
+        "あなたはビジネス分類の専門家です。"
+        "重複する型を統合し、merged_fromで追跡してください。"
+        "必ずJSON配列で出力してください。"
+    )
 
     types_for_merge = [
         {
@@ -275,32 +282,50 @@ def _ai_merge_types(raw_types: list[dict]) -> list[dict]:
         for t in raw_types
     ]
 
-    prompt = template.render(
-        all_types_json=json.dumps(types_for_merge, ensure_ascii=False),
-        target_range="50-80",
-    )
+    def _merge_batch(batch: list[dict], target: str) -> list[dict]:
+        prompt = template.render(
+            all_types_json=json.dumps(batch, ensure_ascii=False),
+            target_range=target,
+        )
+        result = generate_json_with_retry(
+            prompt=prompt,
+            system=system_msg,
+            max_tokens=16384,
+            temperature=0.3,
+            max_retries=2,
+        )
+        if isinstance(result, dict):
+            result = [result]
+        for t in result:
+            if "merged_from" not in t:
+                t["merged_from"] = []
+        return result
 
-    result = generate_json_with_retry(
-        prompt=prompt,
-        system=(
-            "あなたはビジネス分類の専門家です。"
-            "重複する型を統合し、merged_fromで追跡してください。"
-            "必ずJSON配列で出力してください。"
-        ),
-        max_tokens=32768,
-        temperature=0.3,
-        max_retries=2,
-    )
+    if len(types_for_merge) <= BATCH_SIZE:
+        merged = _merge_batch(types_for_merge, "50-80")
+    else:
+        # Split into batches, merge each, then merge results
+        batches = [
+            types_for_merge[i : i + BATCH_SIZE]
+            for i in range(0, len(types_for_merge), BATCH_SIZE)
+        ]
+        logger.info(f"AI統合: {len(types_for_merge)}型を{len(batches)}バッチに分割")
+        intermediate: list[dict] = []
+        for bi, batch in enumerate(batches):
+            target = f"{max(20, len(batch) // 3)}-{max(30, len(batch) // 2)}"
+            batch_result = _merge_batch(batch, target)
+            logger.info(f"  バッチ{bi + 1}: {len(batch)}型 → {len(batch_result)}型")
+            intermediate.extend(batch_result)
+            time.sleep(1.5)
 
-    if isinstance(result, dict):
-        result = [result]
+        if len(intermediate) > BATCH_SIZE:
+            logger.info(f"AI統合: 中間{len(intermediate)}型 → 最終統合")
+            merged = _merge_batch(intermediate, "50-80")
+        else:
+            merged = intermediate
 
-    for t in result:
-        if "merged_from" not in t:
-            t["merged_from"] = []
-
-    logger.info(f"AI統合: {len(raw_types)}型 → {len(result)}型")
-    return result
+    logger.info(f"AI統合: {len(raw_types)}型 → {len(merged)}型")
+    return merged
 
 
 def _save_types_to_sheet(types: list[dict], run_id: str) -> int:
@@ -410,8 +435,20 @@ def run_layer1(
         logger.error(f"Layer 1: 全{len(AXIS_PROMPTS)}プロンプト失敗")
         return []
 
-    # AI merge/dedup
-    merged = _ai_merge_types(all_raw)
+    # AI merge/dedup with fallback to programmatic dedup
+    try:
+        merged = _ai_merge_types(all_raw)
+    except Exception as e:
+        logger.warning(f"AI merge failed ({e}), using programmatic dedup")
+        seen_names: set[str] = set()
+        merged = []
+        for t in all_raw:
+            name = t.get("type_name", "").strip().lower()
+            if name and name not in seen_names:
+                seen_names.add(name)
+                t["merged_from"] = []
+                merged.append(t)
+        logger.info(f"Programmatic dedup: {len(all_raw)}型 → {len(merged)}型")
     merged = _priority_sort(merged, ceo_constraints)
 
     # Assign type_ids
