@@ -218,6 +218,7 @@ export async function POST(request: NextRequest) {
     if (action === "rebuild_pipeline") {
       try {
         const token = await getAccessToken();
+        const IMAGE = "asia-northeast1-docker.pkg.dev/marketprobe-automation/pipeline/scripts:latest";
         const url = `https://cloudbuild.googleapis.com/v1/projects/${GCP_PROJECT}/builds`;
         const buildRes = await fetch(url, {
           method: "POST",
@@ -233,7 +234,13 @@ export async function POST(request: NextRequest) {
                 branchName: "main",
               },
             },
-            filename: "cloudbuild.yaml",
+            steps: [
+              {
+                name: "gcr.io/cloud-builders/docker",
+                args: ["build", "-t", IMAGE, "-f", "Dockerfile", "."],
+              },
+            ],
+            images: [IMAGE],
           }),
         });
         if (!buildRes.ok) {
