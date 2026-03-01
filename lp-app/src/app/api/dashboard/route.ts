@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
 
     // --- Pending offers from offer_3_log (V2: replaces business_ideas) ---
     // Only show READY runs that haven't been approved/rejected yet
-    let pendingIdeas: PendingIdea[] = [];
+    const pendingIdeas: PendingIdea[] = [];
     try {
       const lpReady = await cachedGetAllRows("lp_ready_log").catch(() => [] as Record<string, string>[]);
       const readyRunIds = new Set(
@@ -245,8 +245,8 @@ export async function GET(request: NextRequest) {
     let latestRunId = "";
     let gateResults: Record<string, string>[] = [];
     let offers: Record<string, string>[] = [];
-    let scoringWarnings: string[] = [];
-    let ceoReviewNeeded = { market: false, offer: false };
+    const scoringWarnings: string[] = [];
+    const ceoReviewNeeded = { market: false, offer: false };
     let lpReadyStatus = "";
 
     try {
@@ -316,7 +316,7 @@ export async function GET(request: NextRequest) {
     }
 
     // --- Downstream metrics: inquiry + deal pipeline ---
-    let downstream = {
+    const downstream = {
       totalInquiries: 0,
       newInquiries: 0,
       qualifiedInquiries: 0,
@@ -359,7 +359,7 @@ export async function GET(request: NextRequest) {
     }
 
     // --- Expansion: winning patterns ---
-    let expansion = {
+    const expansion = {
       totalPatterns: 0,
       activePatterns: 0,
       scalingPatterns: 0,
@@ -403,7 +403,7 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    let activeBusinesses: ActiveBusinessEntry[] = [];
+    const activeBusinesses: ActiveBusinessEntry[] = [];
 
     try {
       const lpReady = await cachedGetAllRows("lp_ready_log");
@@ -493,7 +493,7 @@ export async function GET(request: NextRequest) {
     }
 
     // --- Blog stats ---
-    let blogStats = { total: 0, published: 0, draft: 0 };
+    const blogStats = { total: 0, published: 0, draft: 0 };
     try {
       const articles = await cachedGetAllRows("blog_articles");
       blogStats.total = articles.length;

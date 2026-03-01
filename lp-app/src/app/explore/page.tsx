@@ -43,6 +43,7 @@ export default function ExplorePage() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
   return (

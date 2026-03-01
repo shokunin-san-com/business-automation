@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -54,18 +55,18 @@ export default function AppShell({
     <div className="min-h-screen bg-[#0a0a0f] text-white selection:bg-blue-500/30">
       {/* ---- Sidebar ---- */}
       <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[220px] border-r border-white/[.06] bg-[#0d0d14] lg:block">
-        <a href="/dashboard" className="flex h-14 items-center gap-2.5 px-5 no-underline">
+        <Link href="/dashboard" className="flex h-14 items-center gap-2.5 px-5 no-underline">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 text-xs font-bold text-white">
             M
           </div>
           <span className="text-sm font-semibold tracking-tight text-white">MarketProbe</span>
-        </a>
+        </Link>
 
         <nav className="mt-4 space-y-0.5 px-3">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href.split("?")[0]));
             return (
-              <a
+              <Link
                 key={item.href}
                 href={item.href}
                 className="block no-underline"
@@ -85,7 +86,7 @@ export default function AppShell({
                     <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-medium">{lpCount}</span>
                   )}
                 </div>
-              </a>
+              </Link>
             );
           })}
         </nav>
@@ -123,12 +124,12 @@ export default function AppShell({
       <div className="lg:pl-[220px]">
         {/* Mobile header */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/[.06] bg-[#0a0a0f]/80 px-6 backdrop-blur-xl lg:hidden">
-          <a href="/dashboard" className="flex items-center gap-2 no-underline">
+          <Link href="/dashboard" className="flex items-center gap-2 no-underline">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 text-xs font-bold text-white">
               M
             </div>
             <span className="text-sm font-semibold text-white">MarketProbe</span>
-          </a>
+          </Link>
         </header>
         {children}
       </div>

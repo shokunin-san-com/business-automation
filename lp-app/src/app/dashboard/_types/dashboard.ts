@@ -57,6 +57,7 @@ export interface ActiveBusiness {
   runId: string;
   marketName: string;
   payer: string;
+  rank?: string;
   offers: { offerName: string; deliverable: string; price: string }[];
   gatePassedAt: string;
   lpReady: boolean;
@@ -93,6 +94,7 @@ export interface DashboardData {
   activeBusinesses: ActiveBusiness[];
   fetchErrors: DataFetchError[];
   blogStats: { total: number; published: number; draft: number };
+  monthlyCost?: number;
 }
 
 export interface KnowledgeDoc {

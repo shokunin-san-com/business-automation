@@ -31,6 +31,7 @@ export default function ApprovalPage() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
   const handleDecision = async (runId: string, decision: "GO" | "STOP") => {

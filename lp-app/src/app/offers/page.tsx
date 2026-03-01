@@ -56,6 +56,7 @@ export default function OffersPage() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchOffers(); }, [fetchOffers]);
 
   const filtered = statusFilter === "all"

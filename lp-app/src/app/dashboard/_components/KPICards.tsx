@@ -14,9 +14,9 @@ export function KPICards({ data }: Props) {
     (s, b) => s + (b.offers?.length ?? 0), 0,
   );
   const aRankCount = data.activeBusinesses.filter(
-    (b) => (b as Record<string, unknown>).rank === "A",
+    (b) => b.rank === "A",
   ).length;
-  const apiCost = (data as Record<string, unknown>).monthlyCost as number | undefined;
+  const apiCost = data.monthlyCost;
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

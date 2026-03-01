@@ -35,7 +35,7 @@ export function ActiveBusinesses({ businesses }: Props) {
 
       {businesses.map((biz) => {
         const stats = biz.stats;
-        const rank = (biz as Record<string, unknown>).rank as string | undefined;
+        const rank = biz.rank;
         const emailSent = stats.emailSentCount ?? 0;
         const emailReplied = stats.emailRepliedCount ?? 0;
         const elapsed = daysSince(biz.gatePassedAt);
