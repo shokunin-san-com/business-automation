@@ -410,6 +410,56 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // --- Test Gemini with Layer1-like prompt ---
+    if (action === "test_gemini_layer1") {
+      try {
+        const token = await getAccessToken();
+        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2`;
+        const jobRes = await fetch(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+        const job = await jobRes.json();
+        const envVars = job.template?.template?.containers?.[0]?.env || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let apiKey = (envVars.find((e: any) => e.name === "GEMINI_API_KEY") as any)?.value || "";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const secretRef = (envVars.find((e: any) => e.name === "GEMINI_API_KEY") as any)?.valueSource?.secretKeyRef;
+        if (!apiKey && secretRef) {
+          const sUrl = `https://secretmanager.googleapis.com/v1/projects/${GCP_PROJECT}/secrets/${secretRef.secret}/versions/${secretRef.version || "latest"}:access`;
+          const sRes = await fetch(sUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (sRes.ok) { const sd = await sRes.json(); apiKey = Buffer.from(sd.payload?.data || "", "base64").toString("utf-8"); }
+        }
+        if (!apiKey) { report.test_gemini_layer1 = { error: "No API key" }; }
+        else {
+          const testPrompt = "あなたは許認可ビジネスの視点から建設業向けビジネスを設計する専門家です。\n\n## 建設業界コンテキスト\n重層下請構造。職人は日給月給。人材不足が最大課題。\n\n## CEO制約\n{\"industry\":\"建設業\",\"channel\":\"Web完結\",\"team\":\"2-5人\",\"budget\":\"初期投資ほぼゼロ\",\"target_monthly_profit\":3000000}\n\n## 軸: 許認可ビジネス（A3）\n## フォーカス: 建設業許可、特定技能、有料職業紹介\n\n建設業で成り立つビジネスモデルの「型」を5個リストアップ。\n\n## 出力形式（JSON配列）\n[{\"type_name\":\"型の名前\",\"description\":\"説明\",\"revenue_model\":\"収益モデル\",\"example\":\"具体例\"}]";
+          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+          const gRes = await fetch(gUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: testPrompt }] }],
+              systemInstruction: { parts: [{ text: "あなたは建設業界に精通したビジネスアナリストです。ビジネスモデルの「型」をJSON配列で出力してください。" }] },
+              generationConfig: { responseMimeType: "application/json", maxOutputTokens: 16384, temperature: 0.6 },
+            }),
+          });
+          if (!gRes.ok) {
+            report.test_gemini_layer1 = { error: `${gRes.status}: ${(await gRes.text()).slice(0, 500)}` };
+          } else {
+            const data = await gRes.json();
+            const cand = data.candidates?.[0];
+            const text = cand?.content?.parts?.[0]?.text || "";
+            let parsed = null;
+            try { parsed = JSON.parse(text); } catch { parsed = null; }
+            report.test_gemini_layer1 = {
+              status: "OK", response_length: text.length,
+              parsed_count: Array.isArray(parsed) ? parsed.length : parsed ? 1 : 0,
+              first_type: Array.isArray(parsed) ? parsed[0]?.type_name : "(not array)",
+              finish_reason: cand?.finishReason || "",
+              prompt_feedback: data.promptFeedback || null,
+            };
+          }
+        }
+      } catch (e) { report.test_gemini_layer1 = { error: String(e) }; }
+    }
+
     // --- Task 4: Unpublish all blog articles ---
     if (action === "unpublish_blogs" || action === "all") {
       const count = await batchUpdateColumn(
