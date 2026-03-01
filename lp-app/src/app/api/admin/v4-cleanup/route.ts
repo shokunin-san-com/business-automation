@@ -136,8 +136,8 @@ export async function GET() {
       recent_logs: await (async () => {
         try {
           const token = await getAccessToken();
-          const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const filter = `resource.type="cloud_run_job" AND resource.labels.job_name="orchestrate-v2" AND severity>=ERROR AND timestamp>="${since}"`;
+          const since = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+          const filter = `resource.type="cloud_run_job" AND resource.labels.job_name="orchestrate-v2" AND timestamp>="${since}"`;
           const logUrl = "https://logging.googleapis.com/v2/entries:list";
           const res = await fetch(logUrl, {
             method: "POST",
@@ -146,7 +146,7 @@ export async function GET() {
               resourceNames: [`projects/${GCP_PROJECT}`],
               filter,
               orderBy: "timestamp desc",
-              pageSize: 10,
+              pageSize: 30,
             }),
           });
           if (!res.ok) {
