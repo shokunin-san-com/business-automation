@@ -300,7 +300,15 @@ def _abort_pipeline(steps: list[dict], run_id: str, start_time: float):
         lines.append(f"📊 <{ss_url}|スプレッドシートを開く>")
 
     notify("\n".join(lines))
-    update_status("orchestrate_v2", "error", f"パイプライン停止 ({total_duration})")
+
+    # Build detail with step errors for dashboard visibility
+    error_parts = []
+    for s in steps:
+        if s.get("errors"):
+            error_parts.append(f"{s['name']}: {', '.join(s['errors'][:2])}")
+    error_summary = "; ".join(error_parts) if error_parts else "原因不明"
+    detail = f"パイプライン停止 ({total_duration}) — {error_summary}"
+    update_status("orchestrate_v2", "error", detail[:500])
 
 
 # ---------------------------------------------------------------------------
