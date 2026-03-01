@@ -117,11 +117,12 @@ export async function GET() {
           const res = await fetch(execUrl, { headers: { Authorization: `Bearer ${token}` } });
           if (!res.ok) return { error: `${res.status} ${res.statusText}` };
           const data = await res.json();
-          return (data.executions || []).map((ex: Record<string, unknown>) => ({
-            name: (ex.name as string || "").split("/").pop(),
-            status: (ex as Record<string, Record<string, unknown>>).conditions?.[0]?.type || "",
-            reason: (ex as Record<string, Record<string, unknown>>).conditions?.[0]?.reason || "",
-            message: ((ex as Record<string, Record<string, unknown>>).conditions?.[0]?.message as string || "").slice(0, 200),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return (data.executions || []).map((ex: any) => ({
+            name: String(ex.name || "").split("/").pop(),
+            status: ex.conditions?.[0]?.type || "",
+            reason: ex.conditions?.[0]?.reason || "",
+            message: String(ex.conditions?.[0]?.message || "").slice(0, 200),
             createTime: ex.createTime || "",
             completionTime: ex.completionTime || "",
             failedCount: ex.failedCount || 0,
@@ -135,8 +136,9 @@ export async function GET() {
       recent_logs: await (async () => {
         try {
           const token = await getAccessToken();
-          const filter = `resource.type="cloud_run_job" AND resource.labels.job_name="orchestrate-v2" AND severity>=ERROR AND timestamp>="${new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()}"`;
-          const logUrl = `https://logging.googleapis.com/v2/entries:list`;
+          const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          const filter = `resource.type="cloud_run_job" AND resource.labels.job_name="orchestrate-v2" AND severity>=ERROR AND timestamp>="${since}"`;
+          const logUrl = "https://logging.googleapis.com/v2/entries:list";
           const res = await fetch(logUrl, {
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -147,12 +149,16 @@ export async function GET() {
               pageSize: 10,
             }),
           });
-          if (!res.ok) return { error: `${res.status}: ${(await res.text()).slice(0, 200)}` };
+          if (!res.ok) {
+            const errBody = await res.text();
+            return { error: `${res.status}: ${errBody.slice(0, 200)}` };
+          }
           const data = await res.json();
-          return (data.entries || []).map((e: Record<string, unknown>) => ({
-            timestamp: e.timestamp || "",
-            severity: e.severity || "",
-            message: ((e.textPayload || (e.jsonPayload as Record<string, unknown>)?.message || "") as string).slice(0, 300),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return (data.entries || []).map((entry: any) => ({
+            timestamp: entry.timestamp || "",
+            severity: entry.severity || "",
+            message: String(entry.textPayload || entry.jsonPayload?.message || "").slice(0, 300),
           }));
         } catch (e) {
           return { error: String(e) };
