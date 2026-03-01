@@ -356,6 +356,7 @@ def run_layer1(
 ) -> list[dict]:
     all_raw: list[dict] = []
     existing_names: list[str] = []
+    prompt_errors: list[str] = []
 
     for i, pdef in enumerate(AXIS_PROMPTS):
         pid = pdef["prompt_id"]
@@ -376,7 +377,9 @@ def run_layer1(
             existing_names.extend(t["type_name"] for t in new_types)
             logger.info(f"  → {len(new_types)}型 (累計: {len(all_raw)})")
         except Exception as e:
+            err_msg = f"{pid}: {str(e)[:120]}"
             logger.warning(f"Prompt {pid} failed: {e}")
+            prompt_errors.append(err_msg)
             continue
 
         try:
@@ -393,6 +396,19 @@ def run_layer1(
             time.sleep(1.5)
 
     logger.info(f"Layer 1 raw: {len(all_raw)}型 → AI統合開始")
+
+    # Write diagnostic info if many prompts failed
+    if prompt_errors:
+        from utils.status_writer import update_status
+        error_sample = "; ".join(prompt_errors[:3])
+        update_status(
+            "orchestrate_v2", "running",
+            f"A: Layer1 {len(all_raw)}型生成, {len(prompt_errors)}/{len(AXIS_PROMPTS)}失敗 — {error_sample[:300]}",
+        )
+
+    if not all_raw:
+        logger.error(f"Layer 1: 全{len(AXIS_PROMPTS)}プロンプト失敗")
+        return []
 
     # AI merge/dedup
     merged = _ai_merge_types(all_raw)

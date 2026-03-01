@@ -37,7 +37,7 @@ function containsProhibited(offer: Record<string, string>): string[] {
 export async function GET() {
   try {
     const [costRows, settingsRows, pipelineRows, snapshots] = await Promise.all([
-      getAllRows("api_costs").catch(() => []),
+      getAllRows("cost_tracking").catch(() => []),
       getAllRows("settings").catch(() => []),
       getAllRows("pipeline_status").catch(() => []),
       getAllRows("settings_snapshot").catch(() => []),
