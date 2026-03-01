@@ -507,20 +507,31 @@ export async function POST(request: NextRequest) {
               "python run.py",
             ].join(" && ");
 
-            // 3. Update container command (keep everything else)
-            const updatedContainer = {
-              ...container,
+            // 3. Build clean container spec (only writable fields)
+            const cleanContainer: Record<string, unknown> = {
+              image: container.image,
               command: ["/bin/bash", "-c"],
               args: [gitPullCmd],
             };
+            // Preserve env vars and resources
+            if (container.env) cleanContainer.env = container.env;
+            if (container.resources) cleanContainer.resources = container.resources;
 
-            // 4. PATCH the job
-            const patchUrl = `${jobUrl}?updateMask=template.template.containers`;
-            const patchRes = await fetch(patchUrl, {
+            // 4. PATCH the job (full job body, no updateMask)
+            const patchRes = await fetch(jobUrl, {
               method: "PATCH",
               headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
               body: JSON.stringify({
-                template: { template: { containers: [updatedContainer] } },
+                template: {
+                  template: {
+                    containers: [cleanContainer],
+                    maxRetries: job.template?.template?.maxRetries,
+                    timeout: job.template?.template?.timeout,
+                    serviceAccount: job.template?.template?.serviceAccount,
+                  },
+                  taskCount: job.template?.taskCount,
+                },
+                launchStage: job.launchStage,
               }),
             });
 
