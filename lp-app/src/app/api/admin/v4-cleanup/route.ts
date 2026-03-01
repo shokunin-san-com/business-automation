@@ -355,12 +355,32 @@ export async function POST(request: NextRequest) {
           const apiKeyEntry = envVars.find((e: { name: string }) => e.name === "GEMINI_API_KEY");
           const modelEntry = envVars.find((e: { name: string }) => e.name === "GEMINI_MODEL");
 
-          if (!apiKeyEntry?.value) {
-            report.test_gemini = { error: "GEMINI_API_KEY not found in Cloud Run Job env", env_names: envVars.map((e: { name: string }) => e.name) };
-          } else {
-            const model = modelEntry?.value || "gemini-2.5-flash";
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let apiKey = (apiKeyEntry as any)?.value || "";
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const secretRef = (apiKeyEntry as any)?.valueSource?.secretKeyRef;
+          if (!apiKey && secretRef) {
+            try {
+              const secretUrl = `https://secretmanager.googleapis.com/v1/projects/${GCP_PROJECT}/secrets/${secretRef.secret}/versions/${secretRef.version || "latest"}:access`;
+              const secretRes = await fetch(secretUrl, { headers: { Authorization: `Bearer ${token}` } });
+              if (secretRes.ok) {
+                const secretData = await secretRes.json();
+                apiKey = Buffer.from(secretData.payload?.data || "", "base64").toString("utf-8");
+              } else {
+                report.test_gemini = { error: `Secret Manager ${secretRes.status}`, secret: secretRef.secret };
+              }
+            } catch (e) {
+              report.test_gemini = { error: `Secret read failed: ${String(e)}` };
+            }
+          }
+          if (!apiKey && !report.test_gemini) {
+            report.test_gemini = { error: "GEMINI_API_KEY not readable", env_structure: JSON.stringify(apiKeyEntry).slice(0, 300), env_names: envVars.map((e: { name: string }) => e.name) };
+          }
+          if (apiKey) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const model = (modelEntry as any)?.value || "gemini-2.5-flash";
             // Call Gemini API with a simple test prompt
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKeyEntry.value}`;
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
             const testRes = await fetch(geminiUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
