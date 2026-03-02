@@ -460,12 +460,13 @@ export async function GET(request: NextRequest) {
           if (!gate) continue;
 
           const bizOffers = offerRows
-            .filter((o) => o.run_id === rid)
+            .filter((o) => o.run_id === rid && o.status !== "rejected")
             .map((o) => ({
               offerName: o.offer_name || "",
               deliverable: o.deliverable || "",
               price: o.price || "",
             }));
+          if (bizOffers.length === 0) continue;
 
           const bizLps = lpContent.filter((r) => r.business_id === rid);
           const lpUrls = bizLps.map((r) => `https://shokunin-san.xyz/lp/${encodeURIComponent(r.business_id)}`);
