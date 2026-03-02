@@ -447,6 +447,7 @@ export async function GET(request: NextRequest) {
       if (readyRunIds.length > 0) {
         const gateRows = await cachedGetAllRows("gate_decision_log");
         const offerRows = await cachedGetAllRows("offer_3_log");
+        const ceoRejectLog = await cachedGetAllRows("ceo_reject_log").catch(() => [] as Record<string, string>[]);
         const lpContent = await cachedGetAllRows("lp_content");
         const snsPosts = await cachedGetAllRows("sns_posts");
         const formTargets = await cachedGetAllRows("form_sales_targets");
@@ -455,12 +456,24 @@ export async function GET(request: NextRequest) {
         const dealRows = await cachedGetAllRows("deal_pipeline");
         const mailSentRows = await cachedGetAllRows("mail_sent_log").catch(() => [] as Record<string, string>[]);
 
+        // Build set of rejected offers from ceo_reject_log
+        const rejectedOfferKeys = new Set(
+          ceoRejectLog
+            .filter((r) => r.type === "offer")
+            .map((r) => `${r.run_id}:${r.rejected_item}`),
+        );
+
         for (const rid of readyRunIds) {
           const gate = gateRows.find((g) => g.run_id === rid && g.status === "PASS");
           if (!gate) continue;
 
           const bizOffers = offerRows
-            .filter((o) => o.run_id === rid && o.status !== "rejected")
+            .filter((o) => {
+              if (o.run_id !== rid) return false;
+              if (o.status === "rejected") return false;
+              if (rejectedOfferKeys.has(`${o.run_id}:${o.offer_name}`)) return false;
+              return true;
+            })
             .map((o) => ({
               offerName: o.offer_name || "",
               deliverable: o.deliverable || "",
