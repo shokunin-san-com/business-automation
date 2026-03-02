@@ -507,6 +507,7 @@ export async function POST(request: NextRequest) {
         ].join(" && ");
 
         // Use execution-time container overrides (no PATCH needed)
+        // Timeout: 7200s (2 hours) — default 3600s is too short for full pipeline
         const runRes = await fetch(jobUrl, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -515,6 +516,7 @@ export async function POST(request: NextRequest) {
               containerOverrides: [{
                 args: ["/bin/bash", "-c", gitPullCmd],
               }],
+              timeout: "7200s",
             },
           }),
         });
@@ -533,6 +535,30 @@ export async function POST(request: NextRequest) {
         }
       } catch (e) {
         report.deploy_hotfix = { error: String(e) };
+      }
+    }
+
+    // --- Set Cloud Run Job timeout (PATCH only timeout, no image change) ---
+    if (action === "set_timeout") {
+      try {
+        const token = await getAccessToken();
+        const timeoutSec = body.timeout || "7200s";
+        const jobUrl = `https://run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/jobs/orchestrate-v2?updateMask=template.template.timeout`;
+        const patchRes = await fetch(jobUrl, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            template: { template: { timeout: timeoutSec } },
+          }),
+        });
+        if (!patchRes.ok) {
+          const errText = await patchRes.text();
+          report.set_timeout = { error: `PATCH ${patchRes.status}: ${errText.slice(0, 500)}` };
+        } else {
+          report.set_timeout = { status: "OK", timeout: timeoutSec };
+        }
+      } catch (e) {
+        report.set_timeout = { error: String(e) };
       }
     }
 
